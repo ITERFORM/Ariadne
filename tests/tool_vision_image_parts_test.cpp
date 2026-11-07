@@ -156,6 +156,7 @@ int main(int argc, char** argv) {
         CHECK(found, "registration: view_image is in the registry the loop reads");
         const std::string s = core::json_dump(tools::vision_tool_schema());
         CHECK(s.find("\"path\"") != std::string::npos, "schema: takes a path");
+        CHECK(s.find("\"parameters\"") != std::string::npos, "schema: the wrapper shape, not the bare parameters object");
         CHECK(s.find("required") != std::string::npos, "schema: path is required");
     }
 

@@ -134,8 +134,15 @@ std::string sniff_mime(const std::string& raw) {
 }  // namespace anon
 
 core::Json vision_tool_schema() {
+    // The ToolEntry shape every registration uses: {description, parameters}.
+    // Handing back the bare parameters object is what put a `type` key where
+    // `parameters` belongs inside the wire `function` object — a strict server
+    // (OpenRouter) then rejects the whole request body on
+    // `tools[N].function: missing field parameters`, and the turn dies before
+    // the model sees anything. The registry also defaults a missing `parameters`
+    // now, but the shape here is the defect and stays fixed at the source.
     return core::json_parse(
-        R"JSON({"type":"object","properties":{"path":{"type":"string","description":"absolute path of the image file to see (JPEG/PNG/GIF/WebP, up to 8 MiB)"}},"required":["path"]})JSON");
+        R"JSON({"description":"Look at an image file: the bytes are sniffed for a JPEG/PNG/GIF/WebP magic header and shipped to the model as an actual image part, not as a description of its bytes. A text-only model never calls it.","parameters":{"type":"object","properties":{"path":{"type":"string","description":"absolute path of the image file to see (JPEG/PNG/GIF/WebP, up to 8 MiB)"}},"required":["path"]}})JSON");
 }
 
 std::function<std::string(const core::Json&)> make_vision_tool() {

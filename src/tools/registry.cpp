@@ -173,6 +173,50 @@ std::vector<dd::core::Json> ToolRegistry::get_definitions(const std::vector<std:
                     }
             } catch (...) { /* keep static schema */ }
         }
+        // Wire invariant: the model-facing `function` object speaks the OpenAI
+        // target type — {name, description, parameters} with `parameters` an
+        // object. A registration that hands the bare JSON-Schema inline puts
+        // `type`/`properties`/`required` where `parameters` belongs, and a
+        // strict server (OpenRouter deserializes into that typed target) then
+        // refuses the ENTIRE request body: HTTP 200 carrying
+        //   Invalid JSON data: ... tools[13].function: missing field `parameters`
+        // — the turn dies before the model sees anything, and the message
+        // reads like a wire bug rather than one bad registration. Repair in
+        // order of what it preserves: an inline schema is promoted whole under
+        // `parameters` — that is what the registration meant, and the tool
+        // keeps its real signature, where defaulting would have declared a
+        // tool that takes no arguments at all; otherwise `parameters` defaults
+        // to the empty object schema, which keeps a genuinely parameterless
+        // tool callable. Either way no tool can reach the wire in the shape
+        // the server rejects.
+        {
+            static const std::vector<std::string> k_schema_keys{
+                "type", "properties", "required", "additionalProperties"};
+            const dd::core::Json* params = dd::core::json_get(fn, "parameters");
+            const bool params_ok = params && params->type == dd::core::Json::Obj;
+            const bool inline_schema =
+                dd::core::json_get(fn, "properties") || dd::core::json_get(fn, "required");
+            if (!params_ok && inline_schema) {
+                dd::core::Json promoted = dd::core::json_obj();
+                for (const auto& k : k_schema_keys)
+                    if (const dd::core::Json* v = dd::core::json_get(fn, k))
+                        dd::core::obj_set(promoted, k, *v);
+                if (!dd::core::json_get(promoted, "type"))
+                    dd::core::obj_set(promoted, "type", dd::core::json_str("object"));
+                // The schema keys leave `function` — `name` and `description`
+                // are not among k_schema_keys, so they stay where they are.
+                fn.obj.erase(std::remove_if(fn.obj.begin(), fn.obj.end(),
+                    [&](const std::pair<std::string, dd::core::JsonSP>& kv) {
+                        return std::find(k_schema_keys.begin(), k_schema_keys.end(),
+                                         kv.first) != k_schema_keys.end();
+                    }), fn.obj.end());
+                dd::core::obj_set(fn, "parameters", promoted);
+            } else if (!params_ok) {
+                dd::core::obj_set(fn, "parameters",
+                    dd::core::json_obj({{"type", std::make_shared<dd::core::Json>(dd::core::json_str("object"))},
+                                       {"properties", std::make_shared<dd::core::Json>(dd::core::json_obj())}}));
+            }
+        }
         dd::core::Json wrapper = dd::core::json_obj(
             {{"type", std::make_shared<dd::core::Json>(dd::core::json_str("function"))},
              {"function", std::make_shared<dd::core::Json>(std::move(fn))}});

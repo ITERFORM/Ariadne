@@ -65,6 +65,39 @@ int main() {
     }
     CHECK(saw_echo && saw_plain && !saw_secret);
 
+    // --- the wire contract: every model-facing `function` carries a valid
+    //     `parameters` object. None of these tools declared one, so an
+    //     un-repaired schema would put a bare {description, name} inside
+    //     `function` and a strict server would answer the whole request with
+    //     "tools[N].function: missing field parameters" — a refused body, so
+    //     the turn dies before the model sees anything. ---
+    for (const auto& d : defs) {
+        const std::string s = core::json_dump(d);
+        CHECK(s.find("\"parameters\"") != std::string::npos);
+        const Json* fn = core::json_get(d, "function");
+        const Json* params = fn ? core::json_get(*fn, "parameters") : nullptr;
+        CHECK(params && params->type == Json::Obj);
+    }
+
+    // --- a schema that sets `parameters` to the wrong kind is repaired too,
+    //     so the invariant holds whatever a registration hands in ---
+    {
+        ToolRegistry reg2;
+        ToolEntry broken;
+        broken.name = "broken";
+        broken.toolset = "core";
+        broken.schema = core::json_obj({{"description", std::make_shared<Json>(core::json_str("bad parameters"))},
+                                        {"parameters", std::make_shared<Json>(core::json_str("not-an-object"))}});
+        broken.handler = [](const Json&) { return std::string("ok"); };
+        reg2.register_tool(broken);
+        auto bdefs = reg2.get_definitions({"broken"});
+        CHECK(bdefs.size() == 1);
+        const Json* bfn = bdefs.empty() ? nullptr : core::json_get(bdefs[0], "function");
+        const Json* bparams = bfn ? core::json_get(*bfn, "parameters") : nullptr;
+        CHECK(bparams && bparams->type == Json::Obj);
+        CHECK(bparams && bparams->obj.size() == 2);   // {"type":"object","properties":{}}
+    }
+
     // --- availability ---
     CHECK(reg.is_toolset_available("core"));
     CHECK(!reg.is_toolset_available("premium"));

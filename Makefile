@@ -252,6 +252,14 @@ $(BUILD)/dd_tests: $(CORE) $(SKILLS) tests/skills_test.cpp
 $(BUILD)/dd_tools_tests: $(CORE) $(SKILLS) $(TOOLS) tests/tools_registry_test.cpp
 	$(CXX) $(CXXFLAGS) $(CORE) $(SKILLS) $(TOOLS) tests/tools_registry_test.cpp -o $(BUILD)/dd_tools_tests
 
+# The model-facing wire contract: every `tools[N].function` the registry emits
+# carries the target type a strict provider deserializes into. Built from the
+# registry objects alone - no provider, no network - so the invariant is
+# checked where the shape is produced, not where one server happens to reject
+# it.
+$(BUILD)/dd_wire_shape_tests: $(CORE) $(TOOLS) tests/tools_wire_shape_test.cpp
+	$(CXX) $(CXXFLAGS) $(sort $(CORE) $(TOOLS)) tests/tools_wire_shape_test.cpp -o $(BUILD)/dd_wire_shape_tests
+
 $(BUILD)/dd_agent_tests: $(CORE) $(SKILLS) $(TOOLS) $(AGENT) tests/agent_loop_test.cpp
 	$(CXX) $(CXXFLAGS) $(CORE) $(SKILLS) $(TOOLS) $(AGENT) tests/agent_loop_test.cpp -o $(BUILD)/dd_agent_tests
 
@@ -573,7 +581,8 @@ TEST_BINS := $(BUILD)/dd_tests \
   $(BUILD)/dd_state_sql_tests \
   $(BUILD)/dd_turn_context_tests \
   $(BUILD)/dd_usage_pricing_tests \
-  $(BUILD)/dd_wire_messages_tests
+  $(BUILD)/dd_wire_messages_tests \
+  $(BUILD)/dd_wire_shape_tests
 
 # The race-detector list is a variable, not a hardcoded target: a level added by an mk fragment
 # adds its own racing binaries here, and `make tsan` runs whatever the tree actually contains.
