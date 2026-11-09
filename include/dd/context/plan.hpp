@@ -52,6 +52,18 @@ bool plan_label_split(const std::string& label, std::string* session, int* rev);
 std::string plan_content(const PlanDoc& d);
 bool plan_parse(const std::string& content, PlanDoc* out);
 
+// The completion node: what a *finished* plan says in the memory namespace the model reads
+// (`status:plan:<session>:<rev>`). A revision node is a state in a log; this is the outcome —
+// one node a later recall can land on and answer "that work is done, this is what it contained"
+// without walking the revisions. The findings themselves (what broke, what was fixed, what was
+// measured) are the model's to write with mazemaker_remember; this node carries what the harness
+// knows: the ledger, its revision, and every item with its final status.
+std::string plan_close_label(const std::string& session, int rev);
+// `findings` is what the session wrote into memory while the plan was open (the labels of its
+// mazemaker_remember calls): the node names them, so one recall from the closure reaches the
+// facts as well as the plan. Empty is a fact too, and it is stated.
+std::string plan_close_content(const PlanDoc& d, const std::vector<std::string>& findings = {});
+
 // The "- [>] id. text (status)" lines of a ledger rendering (todo_tool's injection, or a plan
 // body): one format the tool, the tape and the maze all agree on.
 bool plan_parse_items(const std::string& text, std::vector<tools::TodoItem>* out);

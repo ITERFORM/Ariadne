@@ -6,6 +6,7 @@
 #include "dd/context/endpoint.hpp"
 #include "dd/context/engine.hpp"
 #include "dd/context/maze.hpp"
+#include "dd/context/plan.hpp"
 #include "dd/context/render.hpp"
 #include "dd/context/tape.hpp"
 #include "dd/know/router.hpp"
@@ -248,7 +249,166 @@ static int plan_breaks(bool engine_takes, int* calls_out, int* late_system, int*
     return breaks;
 }
 
+
+// A memory that answers locally: enough to prove what the soaker writes, without a pod. One
+// writer (the soaker's thread) and one reader (the test, after the soaker is destroyed), which
+// is the same order the real queue gives.
+struct SinkMemory : Memory {
+    std::atomic<int> remembers{0}, edge_count{0};
+    std::string last_label, last_content, edge_a, edge_b, edge_type;
+    bool configured() const override { return true; }
+    bool up() const override { return true; }
+    bool probe() override { return true; }
+    std::vector<Hit> recall(const std::string&, int, const std::string&) override { return {}; }
+    long remember(const std::string& label, const std::string& content) override {
+        last_label = label;
+        last_content = content;
+        return remembers.fetch_add(1, std::memory_order_acq_rel) + 100;
+    }
+    std::vector<Hit> think(long, int) override { return {}; }
+    std::vector<Hit> get(const std::vector<long>&) override { return {}; }
+    std::vector<Hit> facts(long, int) override { return {}; }
+    std::string intent(const std::string&) override { return {}; }
+    std::vector<Hit> labels(const std::string&, int, int) override { return {}; }
+    int connect(const std::vector<Edge>& edges) override {
+        for (const auto& e : edges) {
+            edge_a = e.a;
+            edge_b = e.b;
+            edge_type = e.type;
+            edge_count.fetch_add(1, std::memory_order_acq_rel);
+        }
+        return static_cast<int>(edges.size());
+    }
+};
+
+static void plan_close_node_tests(const std::filesystem::path& tmp) {
+    // The closure rides the same queue a turn does, and chains to the turn it closes: a recall that
+    // lands on it can walk back to the work. The soaker's destructor is the drain.
+    auto mem = std::make_shared<SinkMemory>();
+    PlanDoc d;
+    d.session = "dd-abc";
+    d.rev = 4;
+    d.unix_s = 1794180991;
+    d.done = true;
+    d.items = {{"1", "audit", "completed"}};
+    {
+        Soaker soaker(mem, (tmp / "soak-spool.jsonl").string());
+        soaker.turn("dd-abc", "the question", "an answer worth keeping");
+        soaker.note("dd-abc", plan_close_label("dd-abc", 4), plan_close_content(d));
+        // The worker writes on its own thread; the destructor drains to the SPOOL when it is told
+        // to stop, so a test that wants to see the write waits for it (the product has the same
+        // property: a node queued at exit is replayed next run, not lost).
+        const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (soaker.stats().written < 2 && std::chrono::steady_clock::now() < until)
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    chk(mem->remembers.load() == 2, "plan close: the turn and the closure are both written");
+    chk(mem->last_label == "status:plan:dd-abc:000004", "plan close: the node lands under status:plan:<session>:<rev>");
+    chk(mem->last_content.find("plan closed: session dd-abc, revision 4") != std::string::npos,
+        "plan close: the node's body is the close record");
+    chk(mem->edge_count.load() == 1 && mem->edge_type == "closes" && mem->edge_b == "status:plan:dd-abc:000004",
+        "plan close: it is chained to the turn it closes, with an edge that says so");
+
+    // an empty body is not a node: the same guard the plan writer has
+    auto m2 = std::make_shared<SinkMemory>();
+    {
+        Soaker soaker(m2, (tmp / "soak-spool2.jsonl").string());
+        soaker.note("dd-abc", "status:plan:dd-abc:000005", "   ");
+    }
+    chk(m2->remembers.load() == 0, "plan close: an empty body writes nothing");
+}
+
+static void plan_tests() {
+    // ---- the ledger's labels: one namespace, zero-padded so a walk sorts like the numbers ----
+    chk(plan_label("dd-abc", 7) == "ariadne:plan:dd-abc:000007", "plan: the label is the session's, zero-padded");
+    {
+        std::string session; int rev = 0;
+        chk(plan_label_split("ariadne:plan:dd-abc:000007", &session, &rev) && session == "dd-abc" && rev == 7,
+            "plan: the label splits back");
+        chk(!plan_label_split("auto:turn:dd-abc:6af0", &session, &rev), "plan: a foreign label is not a plan");
+    }
+
+    // ---- content -> parse round-trip: the node is written for a reader with none of this code ----
+    {
+        PlanDoc d;
+        d.session = "dd-abc";
+        d.rev = 3;
+        d.unix_s = 1794180991;
+        d.done = false;
+        d.items = {{"1", "read the seam", "completed"}, {"2", "fix the cause", "in_progress"}, {"3", "drop it", "cancelled"}};
+        const std::string body = plan_content(d);
+        chk(body.find("ariadne plan: session dd-abc, revision 3, state open") != std::string::npos,
+            "plan: the body names the session, the revision and the state");
+        chk(body.find("now: 2. fix the cause") != std::string::npos, "plan: the body says what is in flight");
+        PlanDoc back;
+        chk(plan_parse(body, &back) && back.session == "dd-abc" && back.rev == 3 && !back.done,
+            "plan: the body parses back");
+        chk(back.items.size() == 3 && back.items[1].id == "2" && back.items[1].status == "in_progress",
+            "plan: every item rides the body with its status");
+        d.done = true;
+        chk(plan_parse(plan_content(d), &back) && back.done, "plan: a done revision parses as done");
+        chk(!plan_parse("nothing to do with a plan\n- [x] 1. x (completed)\n", &back),
+            "plan: a body without the header is refused, not half-read");
+    }
+
+    // ---- what is open, and what the recall query carries ----
+    {
+        std::vector<tools::TodoItem> items = {{"1", "a", "completed"}, {"2", "b", "in_progress"}, {"3", "c", "pending"}};
+        chk(plan_open(items) == 2, "plan: pending and in_progress are open");
+        items[2].status = "cancelled";
+        chk(plan_open(items) == 1, "plan: cancelled is closed, like completed");
+        const std::string ledger = "- [>] 2. b (in_progress)\n- [x] 1. a (completed)\n- [ ] 4. d (pending)\n";
+        const std::string q = plan_open_text(ledger, 300);
+        chk(q.find("2. b (in progress)") != std::string::npos && q.find("4. d") != std::string::npos &&
+                q.find("1. a") == std::string::npos,
+            "plan: the recall query names the open work only");
+        std::vector<tools::TodoItem> parsed;
+        chk(plan_parse_items(ledger, &parsed) && parsed.size() == 3 && parsed[0].id == "2",
+            "plan: the item lines parse in the order the ledger wrote them");
+    }
+
+    // ---- the completion node: one recall answers "is that work done, and what was in it" ----
+    {
+        PlanDoc d;
+        d.session = "dd-abc";
+        d.rev = 9;
+        d.unix_s = 1794180991;
+        d.done = true;
+        d.items = {{"1", "audit the wiring", "completed"}, {"2", "fix the build default", "completed"},
+                   {"3", "drop the stale idea", "cancelled"}};
+        chk(plan_close_label("dd-abc", 9) == "status:plan:dd-abc:000009", "plan close: the label is a status node");
+        const std::string body = plan_close_content(d);
+        chk(body.find("plan closed: session dd-abc, revision 9") != std::string::npos, "plan close: it says the plan closed");
+        chk(body.find("3 items (2 done, 1 dropped, 0 open)") != std::string::npos, "plan close: the counts are stated");
+        chk(body.find("ariadne:plan:dd-abc:000009") != std::string::npos, "plan close: it points at the revision it closes");
+        chk(body.find("No finding was written") != std::string::npos,
+            "plan close: with no findings it says so — a gap is not a clean bill");
+        const std::string withf = plan_close_content(d, {"bug:the-one", "decision:the-other"});
+        chk(withf.find("learned (2 memories written while this plan was open)") != std::string::npos &&
+                withf.find("- bug:the-one") != std::string::npos &&
+                withf.find("- decision:the-other") != std::string::npos,
+            "plan close: the findings the session wrote are named in the closure");
+        chk(body.find("- [x] 1. audit the wiring") != std::string::npos &&
+                body.find("- [~] 3. drop the stale idea (cancelled)") != std::string::npos,
+            "plan close: every item and its final status rides along");
+        PlanDoc empty;
+        empty.session = "dd-abc";
+        empty.done = true;
+        chk(plan_close_content(empty).find("items: none") != std::string::npos,
+            "plan close: an emptied ledger closes too, and says so");
+    }
+}
+
 int main() {
+    plan_tests();
+    {
+        const std::filesystem::path ptmp = std::filesystem::temp_directory_path() / ("dd_plan_close_" + std::to_string(::getpid()));
+        std::error_code pec;
+        std::filesystem::create_directories(ptmp, pec);
+        plan_close_node_tests(ptmp);
+        std::filesystem::remove_all(ptmp, pec);
+    }
+
     // ---- tape ----
     {   // the plan rides no tail: every request extends the last, before it every one broke
         int calls = 0, late = 0, carried = 0, items = 0;

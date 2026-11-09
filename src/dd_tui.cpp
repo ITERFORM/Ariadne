@@ -968,10 +968,14 @@ int main(int argc, char** argv) {
     dd::tools::TodoStore todos;              // one ledger per session, model-owned
     dd::context::PlanLog plan_log;           // ... and its half in the maze: a revision per change
     std::function<void()> publish_plan;      // bound below, once the agent exists
+    bool plan_closed_written = false;         // the closure node is written once per finished ledger
+    // What the model wrote into memory while this plan was open, in call order and deduplicated:
+    // the closure node names them, so a recall that lands on the plan reaches the findings too.
+    std::vector<std::string> session_findings;
     auto add_tool = [&](ToolEntry e) {
         if (disabled_tools.count(e.name)) return;   // never registered, so never deckable
         auto inner = std::move(e.handler);
-        e.handler = [inner, name = e.name, &scene](const Json& a) {
+        e.handler = [inner, name = e.name, &scene, &session_findings](const Json& a) {
             const uint64_t tok = scene.tool_begin(name);
             const auto t0 = std::chrono::steady_clock::now();
             std::string r;
@@ -991,7 +995,18 @@ int main(int argc, char** argv) {
                 throw;
             }
             const double ms = ms_since(t0);
-            scene.tool_end(tok, ms, !result_failed(r));
+            const bool failed = result_failed(r);
+            scene.tool_end(tok, ms, !failed);
+            // A finding the model wrote down is part of this session's outcome. Only a call that
+            // succeeded counts, and the label is the model's own (bug:, decision:, invariant:,
+            // ops:, status:): the closure names them; it never invents one.
+            if (!failed && name == "mazemaker_remember" && session_findings.size() < 24) {
+                if (const Json* lb = json_get(a, "label"); lb && lb->type == Json::Str && !lb->str.empty()) {
+                    bool seen = false;
+                    for (const auto& f : session_findings) seen = seen || f == lb->str;
+                    if (!seen) session_findings.push_back(lb->str);
+                }
+            }
             // debug is the level of "every tool call"; the model's intent is the why, and it is on
             // every schema the model writes itself. full adds the arguments and the result's head.
             if (dd::core::logbook::on(dd::core::logbook::Level::Debug)) {
@@ -999,7 +1014,7 @@ int main(int argc, char** argv) {
                 logbook::at(logbook::Level::Debug, "tool", "call", [&](Json& rec) {
                     obj_set(rec, "name", json_str(name));
                     obj_set(rec, "ms", json_num(ms));
-                    obj_set(rec, "ok", json_bool(!result_failed(r)));
+                    obj_set(rec, "ok", json_bool(!failed));
                     obj_set(rec, "out_bytes", json_num(static_cast<double>(r.size())));
                     const std::string why = intent_of(a);
                     if (!why.empty()) obj_set(rec, "why", json_str(logbook::head(why, 200)));
@@ -1702,7 +1717,7 @@ int main(int argc, char** argv) {
     // the todo results carry it inside an epoch, a rebase's turn 0 after one. Nothing rides the
     // tail, so the checkpoint in front of the answer stays good for the next call. An empty
     // ledger empties the prompt, so the weight disappears the moment the work is done.
-    publish_plan = [&todos, &scene, &agent, &engine, &soaker, &plan_log] {
+    publish_plan = [&todos, &scene, &agent, &engine, &soaker, &plan_log, &plan_closed_written, &session_findings] {
         const auto inj = todos.format_for_injection();
         agent.ephemeral_system_prompt = inj ? *inj : "";
         // The turn's own copy of the ledger: begin_turn runs before the first payload is built,
@@ -1731,6 +1746,22 @@ int main(int argc, char** argv) {
         if (!plan_log.moved(todos.items, static_cast<long long>(std::time(nullptr)), &doc)) return;
         const std::string label = dd::context::plan_label(doc.session, doc.rev);
         soaker.plan(engine.session().id(), label, dd::context::plan_content(doc), engine.session().generation());
+        // The ledger records intent; the work leaves findings. When the list closes, the harness
+        // writes the outcome as its own node in the namespace the model reads, once per closure
+        // (a re-opened plan closes again, and both closures are worth a node). The plan itself is
+        // still the revision; this one answers "is that work done, and what was in it" in a single
+        // recall. What the work taught is not the harness's to infer — the prompt asks the model
+        // for it, one memory per fact, before the turn ends.
+        if (doc.done && !plan_closed_written) {
+            plan_closed_written = true;
+            soaker.note(engine.session().id(), dd::context::plan_close_label(doc.session, doc.rev),
+                        dd::context::plan_close_content(doc, session_findings), engine.session().generation());
+            if (session_findings.empty())
+                scene.note("✔ plan closed with no findings written — if the work taught anything, "
+                           "write it with mazemaker_remember before the next plan opens");
+        } else if (!doc.done) {
+            plan_closed_written = false;   // reopened: the next closure is a new node again
+        }
         if (doc.done)
             scene.note("✔ plan closed — " + std::to_string(doc.items.size()) + " items, revision " +
                        std::to_string(doc.rev) + " in the maze as " + label);

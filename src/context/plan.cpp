@@ -204,6 +204,43 @@ bool plan_parse(const std::string& content, PlanDoc* out) {
     return true;
 }
 
+std::string plan_close_label(const std::string& session, int rev) {
+    char num[16];
+    std::snprintf(num, sizeof num, "%06d", rev);
+    return "status:plan:" + session + ":" + num;
+}
+
+// What a finished plan says where the model reads memory. It repeats the ledger's items on
+// purpose: a recall that lands here answers "is that work done, and what was in it" from one
+// node, and the revision namespace stays a log rather than becoming the thing a reader has to
+// walk. `learned:` is a standing reminder that the ledger records intent; only the model can
+// write down what the work taught.
+std::string plan_close_content(const PlanDoc& d, const std::vector<std::string>& findings) {
+    int done = 0, dropped = 0;
+    for (const auto& it : d.items) {
+        if (it.status == "completed") ++done;
+        else if (it.status == "cancelled") ++dropped;
+    }
+    std::string s = "plan closed: session " + d.session + ", revision " + std::to_string(d.rev) + ", " +
+                    iso_utc(d.unix_s) + " — " + std::to_string(d.items.size()) + " items (" +
+                    std::to_string(done) + " done, " + std::to_string(dropped) + " dropped, 0 open)\n";
+    s += "ledger: " + plan_label(d.session, d.rev) +
+         " — the append-only revisions of this plan; this node is the one that says it finished.\n";
+    if (findings.empty()) {
+        s += "learned: the ledger records what was planned, not what the work taught. No finding was written\n";
+        s += "this session — if the work taught anything, that is a gap, not a clean bill.\n";
+    } else {
+        s += "learned (" + std::to_string(findings.size()) + " memories written while this plan was open):\n";
+        for (const auto& f : findings) s += "- " + f + "\n";
+        s += "open one with mazemaker_recall or read it by label; the ledger above is the plan, these are the facts.\n";
+    }
+    if (d.items.empty()) return s + "items: none — the ledger was emptied, and an emptied ledger is closed.\n";
+    s += "items (" + std::to_string(d.items.size()) + "):\n";
+    for (const auto& it : d.items)
+        s += "- " + marker_of(it.status) + " " + it.id + ". " + it.content + " (" + it.status + ")\n";
+    return s;
+}
+
 bool plan_parse_items(const std::string& text, std::vector<tools::TodoItem>* out) {
     std::vector<tools::TodoItem> items;
     for (const auto& line : split_lines(text)) {

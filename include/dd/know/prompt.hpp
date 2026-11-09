@@ -24,6 +24,7 @@ public:
         bool skills = true;     // a skill catalogue is there
         bool find = true;       // the find tool is registered
         bool learn = false;     // learning is on, so the close-the-turn line is worth its tokens
+        bool plan = true;       // the todo ledger rides the maze: a closed plan lands as status:plan:…
     };
     // The harness's side of the memory protocol, in the model's terms. About 130 words.
     static std::string retrieval_contract(const Contract& c);

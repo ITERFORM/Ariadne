@@ -114,7 +114,7 @@ fold must keep the per-call flag, or Esc stops one command and cancels the next 
 `dd::tools::interrupt` (`include/dd/tools/interrupt.hpp:19-27`): an atomic pointer to the flag the
 running call watches — `bind`, `current`, `signal`, `clear`, `is_interrupted` — because a global bool
 would fire a turn that has not started yet. The flag itself is `Agent::interrupt_requested`, bound once
-beside the agent (`src/dd_tui.cpp:1383`); a signal reaches it from the handler at
+beside the agent (`src/dd_tui.cpp:1398`); a signal reaches it from the handler at
 `src/dd_tui.cpp:204-213`, the UI's own `interrupt()` override does the same (`src/dd_tui.cpp:478`), a
 turn starts from `interrupt::clear()` (`src/dd_tui.cpp:463`), and every call in flight hands the module's
 pointer to the shell as `opt.cancel` (`src/dd_tui.cpp:231`, `src/dd_tui.cpp:247`). What the fold made
@@ -189,10 +189,10 @@ The double level is where a run is read rather than watched. At `Verbose`:
 ## W5 — redact untrusted server text at the point it enters the prompt
 
 **Closed** by `a42b913` (ancestor of HEAD). One rule: a server's prose is masked
-where it enters the prompt, its schema is not touched. `src/dd_tui.cpp:1172`
+where it enters the prompt, its schema is not touched. `src/dd_tui.cpp:1188`
 masks the tool `description` through
 `dd::agent::mask_secret_tokens(desc->str, SecretPolicy::ServerProse)`;
-`src/dd_tui.cpp:1255` masks the server's `instructions` the same way. The
+`src/dd_tui.cpp:1270` masks the server's `instructions` the same way. The
 `inputSchema` node is deep-copied untouched (`:1105`), so names, enums and
 `required` stay byte-identical — a masked schema would make the model call things
 the server never offered. `SecretPolicy::ServerProse` deliberately drops the

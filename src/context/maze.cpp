@@ -489,6 +489,15 @@ void Soaker::plan(const std::string& session, const std::string& label, const st
     push(std::move(j));
 }
 
+void Soaker::note(const std::string& session, const std::string& label, const std::string& content, int epoch) {
+    if (label.empty() || trim(content).empty()) return;
+    Job j{"note", session, label, content, epoch, {}};
+    // The edge says what the node is: the work it closes, not the plan it belongs to. A reader
+    // that walks from a turn reaches the closure, and from the closure back to the work.
+    if (!prev_turn_.empty()) j.edges.push_back(Edge{prev_turn_, label, 0.9, "closes"});
+    push(std::move(j));
+}
+
 void Soaker::reasoning(const std::string& session, const std::string& text, int epoch) {
     if (trim(scrub_think(text)).empty()) return;
     const long long t = next_ts(last_ts_reasoning_);

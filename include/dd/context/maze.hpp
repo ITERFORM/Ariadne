@@ -90,6 +90,10 @@ public:
     // queue and this spool because a plan is not less durable than a turn: a dead pod delays
     // it, replay writes it.
     void plan(const std::string& session, const std::string& label, const std::string& content, int epoch = 0);
+    // A node the harness closes something with — today, the plan that reached "all done"
+    // (status:plan:<session>:<rev>). Not a turn and not a revision: a finding, chained to the
+    // turn that was newest, written on this queue for the same reason a plan is.
+    void note(const std::string& session, const std::string& label, const std::string& content, int epoch = 0);
     // A resumed session continues its chain from its last turn.
     void continue_chain(const std::string& last_turn_label) { prev_turn_ = last_turn_label; }
     // consumer side: what was written since (the engine's thread claims the published entries)

@@ -40,6 +40,11 @@ std::string PromptComposer::retrieval_contract(const Contract& c) {
     if (c.memory)
         s += "- The harness already writes every finished turn to the maze. Save only distilled facts with mazemaker_remember "
              "(labels decision:, bug:, fact:, invariant:, ops:, status:).\n";
+    if (c.memory && c.plan)
+        s += "- When your plan reaches all-done the harness writes the closed ledger as status:plan:<session>:<rev>. "
+             "That node says what was planned, not what you learned: before the turn ends, write the findings "
+             "yourself — one mazemaker_remember per fact (bug:, decision:, invariant:, ops:), with the number, the "
+             "path or the command that proves it. A fix nobody can recall is a fix that will be made twice.\n";
     return s;
 }
 
