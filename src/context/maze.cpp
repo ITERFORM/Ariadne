@@ -198,7 +198,7 @@ long Maze::remember(const std::string& label, const std::string& content) {
 }
 
 std::vector<Hit> Maze::think(long id, int depth) {
-    return hits_of(call("mazemaker_think", "{\"memory_id\":" + std::to_string(id) + ",\"depth\":" + std::to_string(depth) + "}", 15000, false));
+    return hits_of(call("mazemaker_think", "{\"memory_id\":" + std::to_string(id) + ",\"depth\":" + std::to_string(depth) + "}", enrich_timeout_ms, false));
 }
 
 std::vector<Hit> Maze::get(const std::vector<long>& ids) {
@@ -206,18 +206,18 @@ std::vector<Hit> Maze::get(const std::vector<long>& ids) {
     for (size_t i = 0; i < ids.size(); i += 25) {   // the tool takes 25 per call
         std::string list;
         for (size_t k = i; k < std::min(ids.size(), i + 25); ++k) list += (list.empty() ? "" : ",") + std::to_string(ids[k]);
-        auto part = hits_of(call("mazemaker_get", "{\"memory_ids\":[" + list + "]}", 15000, false));
+        auto part = hits_of(call("mazemaker_get", "{\"memory_ids\":[" + list + "]}", enrich_timeout_ms, false));
         out.insert(out.end(), part.begin(), part.end());
     }
     return out;
 }
 
 std::vector<Hit> Maze::facts(long source_id, int limit) {
-    return hits_of(call("mazemaker_afe_facts", "{\"source_id\":" + std::to_string(source_id) + ",\"limit\":" + std::to_string(limit) + "}", 10000, false));
+    return hits_of(call("mazemaker_afe_facts", "{\"source_id\":" + std::to_string(source_id) + ",\"limit\":" + std::to_string(limit) + "}", enrich_timeout_ms, false));
 }
 
 std::string Maze::intent(const std::string& query) {
-    const std::string text = call("mazemaker_classify_intent", core::json_dump(core::json_obj({{"query", jsp(core::json_str(query))}})), 5000, false);
+    const std::string text = call("mazemaker_classify_intent", core::json_dump(core::json_obj({{"query", jsp(core::json_str(query))}})), enrich_timeout_ms, false);
     try {
         const Json j = core::json_parse(text);
         if (j.type == Json::Str) return j.str;
@@ -232,13 +232,14 @@ std::vector<Hit> Maze::labels(const std::string& prefix, int offset, int limit) 
                         core::json_dump(core::json_obj({{"prefix", jsp(core::json_str(prefix))},
                                                         {"offset", jsp(core::json_num(offset))},
                                                         {"limit", jsp(core::json_num(limit))}})),
-                        15000, false));
+                        enrich_timeout_ms, false));
 }
 
 int Maze::connect(const std::vector<Edge>& edges) {
     if (edges.empty()) return 0;
     const std::string text = call("mazemaker_connections_import",
-                                  core::json_dump(core::json_obj({{"rows", jsp(edges_json(edges, now_s()))}})), 15000, false);
+                                  core::json_dump(core::json_obj({{"rows", jsp(edges_json(edges, now_s()))}})),
+                                  enrich_timeout_ms, false);
     try {
         return static_cast<int>(num(core::json_parse(text), "imported"));
     } catch (...) {

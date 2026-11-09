@@ -1555,6 +1555,9 @@ int main(int argc, char** argv) {
     // runs on its own thread and its answer is delivered in whichever turn it becomes ready, so this
     // bounds a wedged pod -- and a pod on a second box needs more room than one on the same machine.
     maze->recall_timeout_ms = static_cast<long>(num_or("memory.recall_timeout_ms", 120000));
+    // The small calls around a recall (intent, facts, graph reads, think) run on the deep leg's own
+    // thread: their deadline is the pod's room, not the turn's.
+    maze->enrich_timeout_ms = static_cast<long>(num_or("memory.enrich_timeout_ms", 20000));
     ec.recall_timeout_ms = maze->recall_timeout_ms;
     ec.prewarm = !cfg.has("compression.prewarm") || cfg.get_bool("compression.prewarm");
     if (const char* v = std::getenv("DD_FAST_LAYER")) ec.fast_layer_tokens = std::atol(v);   // tests force a rebase

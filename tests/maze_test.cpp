@@ -139,6 +139,7 @@ struct FakePod {
     std::thread th;
     std::string text = "";
     bool is_error = false, rpc_error = false;
+    std::atomic<int> delay_ms{0};   // a pod on a tunnel: slow to answer, not broken
 
     FakePod() {
         lfd = ::socket(AF_INET, SOCK_STREAM, 0);
@@ -223,6 +224,7 @@ struct FakePod {
                 body = "event: message\ndata: " + core::json_dump(msg) + "\n\n";
                 type = "text/event-stream";
             }
+            if (const int d = delay_ms.load(); d > 0) std::this_thread::sleep_for(std::chrono::milliseconds(d));
             const std::string resp = "HTTP/1.1 200 OK\r\nContent-Type: " + type + "\r\nContent-Length: " + std::to_string(body.size()) +
                                      "\r\nConnection: close\r\n\r\n" + body;
             size_t off = 0;
@@ -253,7 +255,28 @@ static void wait_written(Soaker& s, uint64_t n) {
     for (int i = 0; i < 200 && s.stats().written < n; ++i) std::this_thread::sleep_for(std::chrono::milliseconds(10));
 }
 
+// The small pod calls used to carry hardcoded 5/10/15 s deadlines. A pod on a tunnel answers in
+// seconds: the live log of 2026-11-09 shows classify_intent failing at 5002 ms, afe_facts at
+// 10001 ms and think at 15002 ms, each one sitting exactly on its deadline. `enrich_timeout_ms` is
+// the one knob those calls now share, and this proves it reaches the wire.
+static void test_enrich_deadline() {
+    FakePod pod;
+    pod.text = "\"factual\"";
+    pod.delay_ms = 700;
+    Maze m(pod.url());
+    chk(m.probe() || true, "enrich: probe");   // the probe itself may time out under the delay; the calls below are what matter
+
+    m.enrich_timeout_ms = 2500;
+    chk(m.intent("what did we decide about the quadlet units") == "factual",
+        "enrich: a 700 ms answer survives a 2.5 s deadline");
+
+    m.enrich_timeout_ms = 300;
+    chk(m.intent("what did we decide about the quadlet units").empty(),
+        "enrich: the same answer is cut at 300 ms — the knob is the deadline, not a constant");
+}
+
 int main() {
+    test_enrich_deadline();
     // ---- the soaker writes a chain: ids back, edges between nodes, labels unique ----
     {
         auto g = std::make_shared<FakeGraph>();

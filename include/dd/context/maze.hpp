@@ -56,6 +56,15 @@ public:
     // than the turn. memory.recall_timeout_ms overrides it.
     long recall_timeout_ms = 120000;
 
+    // The small calls AROUND a recall — intent, facts, graph reads, think — run on the deep leg's
+    // own thread and never block a turn. They used to carry hardcoded 5/10/15 s deadlines, which a
+    // pod behind a tunnel blows through under load: the live log of 2026-11-09 shows four failed
+    // calls an hour, each one sitting exactly on its deadline (5002 ms, 10001 ms, 15002 ms) while
+    // the pod's own p99 was 17 s. One knob for all of them, because they are one class: enrichment
+    // that is worth waiting for and not worth failing at the first slow answer.
+    // memory.enrich_timeout_ms overrides it.
+    long enrich_timeout_ms = 20000;
+
 private:
     std::string url_, health_;
     std::atomic<bool> up_{false};

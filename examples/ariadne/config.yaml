@@ -92,6 +92,9 @@ compression:
 
 memory:
   turn_recall: true        # look something up for the question; false switches every offer below off
+  enrich_timeout_ms: 20000 # the small calls AROUND a recall (intent, facts, graph reads, think): they run on
+                           # the deep leg's own thread, so this is the pod's room, not the turn's. 5/10/15 s were
+                           # hardcoded and a pod behind a tunnel blew through them under load.
   recall_timeout_ms: 120000 # how long ONE pod recall may take before its request is given up. The turn never waits
                            # that long (knowledge.deep_ms is the turn's patience); this is the pod's own room.
   soak:

@@ -305,7 +305,7 @@ so it is engineer-decidable like every other wave:
 | 5 queues | `src/context/maze.cpp:269` (`Job`), `src/context/maze.cpp:270` (`LedgerEntry`), `include/dd/know/router.hpp:135` (`opened_q_`), `include/dd/learn/sink.hpp:43` (`q_`), `include/dd/ui.hpp:504` (`Scene q_`) | Vyukov MPSC allocates one node per push and grows without bound. `Scene::llm_content` (`src/ui.cpp:1037`) posted an event per streamed delta, so a long answer was thousands of nodes and thousands of string copies on the hot path. These five lines are where each hand-off lives today: all five are `SlotRing`s |
 | 6 deques | `src/core/json.cpp:201`, `include/dd/know/working_set.hpp:80`, `include/dd/learn/episode.hpp:53`, `include/dd/ui.hpp:520`, `include/dd/ui.hpp:522`, `include/dd/ui.hpp:528` | not hand-offs — each has exactly one owning thread. They stay; each must name it |
 | `core::park` / `unpark`, 12 sites | `src/know/catalogue.cpp`, `src/know/router.cpp`, `src/learn/sink.cpp`, `src/limbo/spawn.cpp` | a futex wait on an atomic word: no lock, nothing polls. Stays |
-| `fsx::FileLock` x3 + `Ledger::FileLock` | `src/context/maze.cpp:288`, `src/context/maze.cpp:311`, `src/context/maze.cpp:330`, `src/learn/ledger.cpp:47` | cross-process durability on the spool and the ledger, held by the kernel, not by us. Out of scope |
+| `fsx::FileLock` x3 + `Ledger::FileLock` | `src/context/maze.cpp:289`, `src/context/maze.cpp:312`, `src/context/maze.cpp:331`, `src/learn/ledger.cpp:47` | cross-process durability on the spool and the ledger, held by the kernel, not by us. Out of scope |
 
 The `where` column carries today's lines, not the ones the inventory found: where the wave landed, the
 object named is the ring, the lock or the deque that replaced what was scoped.
