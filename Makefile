@@ -1,7 +1,14 @@
 BUILD ?= build
-.DEFAULT_GOAL := $(BUILD)/ariadne
+# `make` builds every product. The single binary goal below still exists for the fast loop
+# (`make build/ariadne`); the default had to stop being that goal, because the three products share
+# CORE/AGENT/KNOW/TOOLS and a bare `make` left ariadne-agent and ariadne-skills stale while printing
+# success. A whole build costs +1-2 min; a stale shipped binary costs a wrong result.
+.DEFAULT_GOAL := all
 .PHONY: all test clean install install-all doc-audit tsan runtime-probe interrupt-probe
-all: $(BUILD)/ariadne
+# Every product, not just the TUI: they share CORE/AGENT/KNOW/TOOLS, so a change to a shared source
+# leaves ariadne-agent and ariadne-skills stale if `all` builds one binary and reports success. The
+# cost is two more whole-target links (~1-2 min); a stale shipped binary costs a wrong result.
+all: $(BUILD)/ariadne $(BUILD)/ariadne-agent $(BUILD)/ariadne-skills
 # The install is the folder the operator runs ariadne from, the one that owns
 # config.yaml; build/ is make's output and never a home (ariadne refuses it).
 INSTALL_DIR ?= $(HOME)/ariadne
@@ -23,7 +30,7 @@ TLS_LIBS ?= -lssl -lcrypto
 # Every executable rule writes into build/. Create it while parsing the Makefile,
 # so even direct goals such as `make $(BUILD)/ariadne` work from a clean checkout.
 $(shell mkdir -p $(BUILD))
-CORE := src/core/path.cpp src/core/yaml.cpp src/core/json.cpp src/core/message.cpp
+CORE := src/core/path.cpp src/core/yaml.cpp src/core/json.cpp src/core/message.cpp src/core/logbook.cpp
 VISION := src/tools/vision_tool.cpp src/core/sha256.cpp   # the digest the tool dedupes on links with it
 SKILLS := src/skills/scanner.cpp src/skills/registry.cpp
 TOOLS := src/tools/registry.cpp src/tools/todo_tool.cpp
@@ -305,6 +312,9 @@ $(BUILD)/dd_tools_interrupt_tests: $(CORE) $(TOOLS) $(INTERRUPT) $(PROVENANCE) t
 $(BUILD)/dd_debug_tests: $(CORE) $(COREHOME) $(DEBUG) tests/tools_debug_test.cpp
 	$(CXX) $(CXXFLAGS) $(CORE) $(COREHOME) $(DEBUG) tests/tools_debug_test.cpp -o $(BUILD)/dd_debug_tests
 
+$(BUILD)/dd_logbook_tests: $(CORE) tests/core_logbook_test.cpp
+	$(CXX) $(CXXFLAGS) $(CORE) tests/core_logbook_test.cpp -pthread -o $(BUILD)/dd_logbook_tests
+
 $(BUILD)/dd_budget_tests: $(CORE) $(TOOLS) $(BUDGET) tests/tools_budget_test.cpp
 	$(CXX) $(CXXFLAGS) $(CORE) $(TOOLS) $(BUDGET) tests/tools_budget_test.cpp -o $(BUILD)/dd_budget_tests
 
@@ -503,6 +513,7 @@ TEST_BINS := $(BUILD)/dd_tests \
   $(BUILD)/dd_tools_security_tests \
   $(BUILD)/dd_tools_interrupt_tests \
   $(BUILD)/dd_debug_tests \
+  $(BUILD)/dd_logbook_tests \
   $(BUILD)/dd_budget_tests \
   $(BUILD)/dd_tool_limits_tests \
   $(BUILD)/dd_env_passthrough_tests \

@@ -27,7 +27,7 @@ model; we have 498 skills and a 54.6k rebase mark.
 | # | Finding | Evidence |
 |---|---|---|
 | F1 | Retrieval fires at the turn boundary (`router_->on(t)`) and on a rebase (`Rebased`); nothing looked anything up after the first tool call until W7 added the steering follow-up (`router_->on(f)`). | `src/context/engine.cpp:437`, `src/context/engine.cpp:498`, `src/context/engine.cpp:855` |
-| F2 | Closed. The system prompt once had three voices that contradicted each other: the preamble ("memory recall is only for past decisions"), the pod's ~860-token `instructions` pasted verbatim ("RECALL FIRST ... NO EXCEPTIONS", "SAVE PER TURN", `session_search`, a tool this harness does not have), and the harness paragraph ("already done ... only for what the block lacks"). Server prose is now masked, never pasted as authority: tool descriptions and the instructions text go through `SecretPolicy::ServerProse`. | `include/dd/know/prompt.hpp:6`, `src/dd_tui.cpp:1109`, `src/dd_tui.cpp:1156`, `src/tools/mcp_client.cpp:296` |
+| F2 | Closed. The system prompt once had three voices that contradicted each other: the preamble ("memory recall is only for past decisions"), the pod's ~860-token `instructions` pasted verbatim ("RECALL FIRST ... NO EXCEPTIONS", "SAVE PER TURN", `session_search`, a tool this harness does not have), and the harness paragraph ("already done ... only for what the block lacks"). Server prose is now masked, never pasted as authority: tool descriptions and the instructions text go through `SecretPolicy::ServerProse`. | `include/dd/know/prompt.hpp:6`, `src/dd_tui.cpp:1172`, `src/dd_tui.cpp:1156`, `src/tools/mcp_client.cpp:296` |
 | F3 | Skill matching is blind and noisy.
 | F4 | Closed: the catalogue is not read once. `ariadne` builds a merged `SkillCatalogue` through `know::make_skill_catalogue` and refreshes it — `Refresher` on a timer, `poke` after a skill is opened — so a pod that was down at launch fills in while the session runs. | `src/dd_tui.cpp:910-915,834-836,856`, `src/know/wiring.cpp` |
 | F5 | Catalogue quality. 611 `skill:` rows are 498 skills + 5 notes posing as skills (`fix-i3-services-not-starting` was *offered* as one) + 1 AFE fragment. 107 names exist in both `builtin` and `local` (95 identical sha, 4 differ, 8 unknown). 101 cards have no body slices (`load()` then returns the 650-char card as "the skill"). 96 legacy cards carry raw frontmatter in the text. Only 134 cards have tags. | maze census |
@@ -487,7 +487,7 @@ goes.
 **Never** `~/.daedalus` implicitly. One definition: `core/home.cpp` uses it too. `DAEDALUS_HOME` is the Python
 Daedalus's variable and is not read: `DD_HOME` is the one environment override. The five hard-coded sites go.
 
-**A missing `config.yaml` refuses the start, and `DD_BASE_URL` does not exempt it** (`src/dd_tui.cpp:692`). An
+**A missing `config.yaml` refuses the start, and `DD_BASE_URL` does not exempt it** (`src/dd_tui.cpp:703`). An
 endpoint names a socket, not a setting: it carries no model id, no tool set and no context budget, so the old
 exemption let a start run a half-configured agent — empty model, the 8 built-in tools instead of the configured
 set — and open `learn/` and `logs/` in a home nothing had ever configured, the exact state the refusal keeps out.
@@ -581,6 +581,17 @@ prompts. 77 real prompts (33 with a fitting skill, labeled by me) against the li
 | **shipped: matched >= 2, mass >= 6.5, share >= 0.15** | 21 | **17 of 33** | **3** |
 | shipped, head opened at share >= 0.25 | 12 | 9 right at 1 | |
 
+Re-measured 2026-11-09 on a fresh corpus — 1333 real asks, 185 of which opened a skill, against this
+home's 474 disk skills (`ariadne-skills replay`):
+
+| bar (score >= 0.15 held) | offers | right@1 | wrong | offers on asks that opened nothing | prec@1 |
+|---|---|---|---|---|---|
+| mass 6.5 at 568 (= 6.31 at 474) | 505 | 28 | 63 | 414 | .31 |
+| **mass 9.5 at 502 (= 9.41 at 474)** | **404** | 22 | **42** | **340** | **.34** |
+
+Six right offers given up, twenty-one wrong ones and seventy-four dead ones removed: `find` covers the
+former, nothing covered the latter. The shipped config now carries 9.5 / 502 / open 0.40.
+
 The score alone cannot work: a single generic word ("python", "claude", "parallel") reaches 0.85 on share alone and carries no
 evidence, while the right skill for a long prompt scores 0.07 because one term of twelve matched. Evidence (idf mass) and the
 number of matched terms separate them. The other half of the answer is that the mid-turn signals (tool arguments, paths,
@@ -589,7 +600,7 @@ errors, the model's own `intent`) are far more specific than the user's message,
 to the missing half; its cost is the pod's 6-17 s, so it stays asynchronous.
 
 **Deviations.**
-- `Confidence` scales its evidence bar with `ln(catalogue size)`: the calibrated 6.5 is "at 568 skills"; a catalogue of twenty
+- `Confidence` scales its evidence bar with `ln(catalogue size)`: the calibrated 9.5 is "at 502 skills"; a catalogue of twenty
   needs about 3. Without it a new user's catalogue would never offer anything.
 - The maze's `skill:local:` cards are snapshots of this host's disk skills: when the disk has the skill, the disk wins and the
   snapshot is counted as `superseded` (411 of them today), not kept as a differing variant (it made 94 phantom variants).

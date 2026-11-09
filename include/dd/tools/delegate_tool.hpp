@@ -9,6 +9,17 @@
 //                kDelegateMaxChildren children, run concurrently
 //   -> {"results":[{task_index,status,summary,api_calls,duration_seconds,
 //                   exit_reason,tokens,...}, ...],"total_duration_seconds":N}
+//
+// Background (added 2026-11-09): a batch need not hold the turn hostage. With
+// `action:"start"` (or `background:true`) the call returns at once with a job_id while the
+// children run, and `action:"status"|"wait"|"collect"|"kill"` + `job_id` looks at them;
+// `action:"list"` names the live jobs. Jobs live in a fixed pool of kDelegateMaxJobs, one
+// slot per job, no mutex: a slot moves Free -> Starting -> Running -> Finished -> Free, and
+// only the last child to finish publishes Finished, so a collector that sees it (acquire)
+// can read every result cell. A job outlives the turn that started it and never dereferences
+// the parent Agent: model, gate and depth are copied at start, and the wire is copied by
+// value. `kill` sets the job's own stop flag, which the child's wire call, its shell call and
+// its loop all watch — the turn that started the job is not affected.
 // A child is a fresh Agent with its own transcript, its own HttpLLM (the wire
 // config copied from the parent's transport) and its own tool registry (the
 // file and terminal tools; the todo ledger is the child's own). Depth is
@@ -36,6 +47,7 @@ namespace tools {
 constexpr int kDelegateMaxChildren = 3;    // delegate_tool.py MAX_CONCURRENT_CHILDREN
 constexpr int kDelegateMaxDepth = 2;       // delegate_tool.py MAX_DEPTH
 constexpr int kDelegateMaxIterations = 50; // delegate_tool.py DEFAULT_MAX_ITERATIONS
+constexpr int kDelegateMaxJobs = 8;        // background jobs alive at once; a slot is reused when collected
 
 // The focused prompt a child runs on (delegate_tool.py::_build_child_system_prompt).
 // `workspace_path` empty means the paragraph is left out.

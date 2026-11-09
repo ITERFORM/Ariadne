@@ -757,12 +757,15 @@ Ariadne is an evolving systems project. Its limitations should be as visible as 
 
 - AVX-512 kernels compile but have not been verified on AVX-512 hardware in the recorded environment.
 - The terminal tool is not a sandbox.
-- Some ported components are not connected to product binaries.
+- Some ported components are not connected to product binaries; the line below is the whole list, and
+  `make doc-audit` proves it against the link lines rather than against this sentence.
 - Performance depends on the inference backend, model, hardware, and workload.
 - The harness primarily targets OpenAI-compatible inference endpoints.
 - Its optional Limbo engine integration does not include model weights or an engine build in this repository.
 
 These are engineering boundaries, not footnotes to be hidden.
+
+**Ported but not wired.** `src/agent/` (backend_kind, classification, kv_watermarks, message_sanitization, payload_tape, prompt_cache_boundary, prompt_caching, retry_utils, ssl_guard), `src/core/` (sha1), `src/cron/` (jobs, schedule), `src/gateway/` (authz_mixin, channel_directory, hooks, mirror, pairing, platform_registry, sticker_cache), `src/tools/` (audio_container, binary_extensions, browser_camofox_state, budget_config, debug_helpers, delegation_output_schema, env_passthrough, osv_package_parse, schema_sanitizer, threat_patterns, tool_backend_helpers, website_policy) — 31 of 136 `.cpp` files, each with a reason in the plan file under "Not in this plan", and each reached by its own suite in `tests/` instead of by a product binary.
 
 ---
 

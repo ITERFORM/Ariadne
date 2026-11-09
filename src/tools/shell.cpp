@@ -1135,10 +1135,21 @@ static int spawn_sh(const std::string& full, int out, pid_t* pid_out) {
     return rc;
 }
 
+// Either authority ends the call: the turn's Esc (`cancel`) or the batch this call belongs to
+// (`cancel2`). One predicate, so no polling site can honour one and forget the other.
+static bool stopped(const ShellOptions& opt) {
+    return (opt.cancel && opt.cancel->load(std::memory_order_relaxed)) ||
+           (opt.cancel2 && opt.cancel2->load(std::memory_order_relaxed));
+}
+static bool stopped(const JobOptions& opt) {
+    return (opt.cancel && opt.cancel->load(std::memory_order_relaxed)) ||
+           (opt.cancel2 && opt.cancel2->load(std::memory_order_relaxed));
+}
+
 std::string run_shell(const std::string& cmd, const ShellOptions& opt, const ShellPolicy& policy) {
     if (cmd.empty()) return jerr("cmd required");
     if (std::string why = shell_danger(cmd, policy); !why.empty()) return jerr("refused: " + why);
-    if (opt.cancel && opt.cancel->load(std::memory_order_relaxed)) return jerr("interrupted");
+    if (stopped(opt)) return jerr("interrupted");
     if (const double sl = longest_sleep_s(cmd); sl > kForegroundSleepMaxS)
         return jerr("refused: a foreground `sleep " + std::to_string(static_cast<long>(sl)) + "` blocks the whole turn. "
                     "To wait for something, run it with background:true and call job with action \"wait\" -- it "
@@ -1169,7 +1180,7 @@ std::string run_shell(const std::string& cmd, const ShellOptions& opt, const She
     std::string error;
     char buf[1 << 16];
     for (;;) {
-        if (opt.cancel && opt.cancel->load(std::memory_order_relaxed)) {
+        if (stopped(opt)) {
             error = "interrupted";
             break;
         }
@@ -1470,7 +1481,7 @@ std::string job_call(const std::string& action, int id, int wait_s, const JobOpt
         const auto until = Clock::now() + std::chrono::seconds(secs);
         reap(*j);
         while (Clock::now() < until && j->state.load(std::memory_order_acquire) == kJobRunning) {
-            if (opt.cancel && opt.cancel->load(std::memory_order_relaxed)) break;
+            if (stopped(opt)) break;
             ::poll(nullptr, 0, 200);
             reap(*j);
         }

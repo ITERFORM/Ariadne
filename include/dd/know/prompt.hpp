@@ -32,6 +32,19 @@ public:
     static std::string workflow_contract(const Contract& c);
     // "skills 568: devops 149 · ..." lines, under one heading; "" when there are none
     static std::string catalogue_map(const std::vector<std::string>& lines);
+    // What the model is inside: the harness's own name, the organs a turn can use, and the one
+    // sentence per organ a model needs to steer it — tools, memory, delegation, the tape. About
+    // 120 words, and it says nothing a session does not have (a child has no delegate_task).
+    struct Harness {
+        std::string version;        // "0.1.0"
+        bool memory = true;         // the maze answers at all
+        bool skills = true;         // a catalogue is there
+        bool delegate = true;       // delegate_task is registered in this turn
+        bool background = true;     // the job tool is registered
+        int depth = 0;              // 0: a top-level turn; >0: a delegate child
+        size_t tools = 0;           // how many tools this turn's model can see
+    };
+    static std::string harness_contract(const Harness& h);
 
     enum class Instructions { Harness, Verbatim, Off };
     static Instructions instructions_mode(const std::string& configured, bool is_maze);

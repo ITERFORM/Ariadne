@@ -35,6 +35,7 @@
 #include "dd/core/exit_status.hpp"
 #include "dd/core/home.hpp"
 #include "dd/core/json.hpp"
+#include "dd/core/logbook.hpp"
 #include "dd/core/message.hpp"
 #include "dd/core/slot_ring.hpp"
 #include "dd/gateway/cli.hpp"
@@ -188,6 +189,14 @@ static bool result_failed(const std::string& r) {
     } catch (...) {
     }
     return false;
+}
+
+// The model's own `intent` argument, when the schema carries one: the why of a call, which is the
+// field a log is worth reading for. Empty when the call did not say.
+static std::string intent_of(const Json& args) {
+    if (args.type != Json::Obj) return std::string();
+    if (const Json* i = json_get(args, "intent"); i && i->type == Json::Str) return i->str;
+    return std::string();
 }
 
 // ---- file and shell tools: dd/tools/fs_tools.hpp, dd/tools/shell.hpp ----
@@ -405,7 +414,7 @@ void size(int& cols, int& rows) {
 
 }  // namespace term
 
-static const char* const kCommands[] = {"/help", "/tools", "/turns", "/effort", "/reasoning", "/verbose", "/plan", "/context", "/rebase",
+static const char* const kCommands[] = {"/help", "/tools", "/turns", "/effort", "/reasoning", "/verbose", "/log", "/plan", "/context", "/rebase",
                                         "/resume", "/retry", "/clear", "/new", "/learn", "/interrupt", "/quit",
                                         "/mcp"};   // every live MCP server adds its own "/<server>" at boot
 
@@ -444,6 +453,8 @@ static std::vector<std::string> arg_matches(const std::string& typed, const std:
     std::vector<std::string> all;
     if (cmd == "/verbose")
         all.assign(dd::ui::kVerbosityWords, dd::ui::kVerbosityWords + sizeof(dd::ui::kVerbosityWords) / sizeof(const char*));
+    else if (cmd == "/log")
+        all = {"off", "error", "warn", "info", "debug", "full"};   // the log's own words, not the deck's
     else if (cmd == "/effort") all = efforts;
     else if (cmd == "/reasoning") {
         all = efforts;
@@ -737,6 +748,23 @@ int main(int argc, char** argv) {
     catch (const std::exception& ex) { std::cerr << "config: " << ex.what() << "\n"; }
     dd::know::configure(cfg);
 
+    // ---- the logbook: one file, one level, nothing on the TUI ----
+    // Resolved here, before the gateway/admin branches return and before any worker exists, so a
+    // serving harness logs without a terminal and every thread inherits the same sink. A bare start
+    // writes no line until something happens: the file is opened on the first record, not here.
+    bool log_level_named = false;   // a config/env level outranks the display's pairing
+    {
+        using dd::core::logbook::Level;
+        std::string lp = cfg.get_string("logging.path");
+        lp = lp.empty() ? (home.logs() / "harness.jsonl").string() : dd::know::expand_home(lp).string();
+        Level lv = Level::Info;
+        if (cfg.has("logging.level")) lv = dd::core::logbook::from_word(cfg.get_string("logging.level"), &log_level_named);
+        if (const char* e = std::getenv("DD_LOG"); e && *e) lv = dd::core::logbook::from_word(e, &log_level_named);
+        dd::core::logbook::init(lp, lv);
+        dd::core::logbook::context("home", home.root.string());
+        dd::core::logbook::context("version", kVersion);
+    }
+
     // The device gateway's admin: no agent, no model, no MCP -- files under state/gateway.
     if (!gw_action.empty()) {
         const auto gdir = dd::gateway::state_dir(home.state());
@@ -902,8 +930,16 @@ int main(int argc, char** argv) {
         // A value that names no level is said out loud, not dropped: `verbose: 1` in config and
         // DD_VERBOSE=1 in the environment both used to leave the deck at its default with nothing
         // on screen saying the setting was ignored.
-        if (dd::ui::is_verbosity_word(v)) scene.set_verbosity(dd::ui::verbosity_from_word(v));
-        else scene.note("display.verbose \"" + v + "\" names no level — kept " + dd::ui::verbosity_label(scene.verbosity()));
+        if (dd::ui::is_verbosity_word(v)) {
+            scene.set_verbosity(dd::ui::verbosity_from_word(v));
+            // One word for the operator, two files for the machine: the display's level also sets
+            // the log's, unless logging.level / DD_LOG named one. off keeps failures, full keeps
+            // the payload heads; normal sits at info, where starts, turns and failures live.
+            if (!log_level_named)
+                dd::core::logbook::set_level(scene.verbosity() == dd::ui::Verbosity::Minimal ? dd::core::logbook::Level::Error
+                                             : scene.verbosity() == dd::ui::Verbosity::Verbose ? dd::core::logbook::Level::Full
+                                                                                               : dd::core::logbook::Level::Info);
+        } else scene.note("display.verbose \"" + v + "\" names no level — kept " + dd::ui::verbosity_label(scene.verbosity()));
     }
 
     // A/B knob: names to leave out of the deck entirely (comma-separated). The prompt, the tape and
@@ -943,9 +979,36 @@ int main(int argc, char** argv) {
                 r = inner(a);
             } catch (...) {
                 scene.tool_end(tok, ms_since(t0), false);
+                // A tool that threw is the record a post-mortem looks for first: which one, with
+                // what arguments, after how long. info, because a throw is always worth a line.
+                {
+                    using namespace dd::core;
+                    logbook::emit(logbook::Level::Error, "tool", "throw",
+                                  {{"name", logbook::S(name)},
+                                   {"ms", logbook::N(ms_since(t0))},
+                                   {"why", logbook::S(logbook::head(intent_of(a), 200))}});
+                }
                 throw;
             }
-            scene.tool_end(tok, ms_since(t0), !result_failed(r));
+            const double ms = ms_since(t0);
+            scene.tool_end(tok, ms, !result_failed(r));
+            // debug is the level of "every tool call"; the model's intent is the why, and it is on
+            // every schema the model writes itself. full adds the arguments and the result's head.
+            if (dd::core::logbook::on(dd::core::logbook::Level::Debug)) {
+                using namespace dd::core;
+                logbook::at(logbook::Level::Debug, "tool", "call", [&](Json& rec) {
+                    obj_set(rec, "name", json_str(name));
+                    obj_set(rec, "ms", json_num(ms));
+                    obj_set(rec, "ok", json_bool(!result_failed(r)));
+                    obj_set(rec, "out_bytes", json_num(static_cast<double>(r.size())));
+                    const std::string why = intent_of(a);
+                    if (!why.empty()) obj_set(rec, "why", json_str(logbook::head(why, 200)));
+                    if (logbook::on(logbook::Level::Full)) {
+                        obj_set(rec, "args", json_str(logbook::head(json_dump(a), 600)));
+                        obj_set(rec, "out", json_str(logbook::head(r, 400)));
+                    }
+                });
+            }
             return r;
         };
         reg.register_tool(e);
@@ -1487,6 +1550,19 @@ int main(int argc, char** argv) {
         contract.memory = maze->configured();
         contract.skills = skill_cat != nullptr;
         contract.learn = learner != nullptr;
+        // What the model is inside. Without it the prompt describes tools but never the harness, and
+        // a model cannot steer (or trust) an organ it has not been told it has: the delegation line,
+        // the memory line and the tape line are the difference between a chat box and this thing.
+        {
+            dd::know::PromptComposer::Harness h;
+            h.version = kVersion;
+            h.memory = maze->configured();
+            h.skills = skill_cat != nullptr;
+            h.delegate = reg.get_schema("delegate_task") != nullptr;
+            h.background = reg.get_schema("job") != nullptr;
+            h.tools = reg.get_all_tool_names().size();
+            composer.section(dd::know::PromptComposer::harness_contract(h));
+        }
         if (!cfg.has("agent.contract") || cfg.get_bool("agent.contract"))
             composer.section(dd::know::PromptComposer::workflow_contract(contract));
         composer.section(dd::know::PromptComposer::retrieval_contract(contract));
@@ -1604,6 +1680,24 @@ int main(int argc, char** argv) {
     agent.context = &engine;
     agent.gate = &gate;
 
+    // The first line of every run, and the one a later reading needs to make sense of the rest:
+    // what this process is, where its home is, which model it speaks to, what it was given to work
+    // with, and whether the pod it remembers through answered at boot. No key, no prompt text.
+    {
+        using namespace dd::core;
+        logbook::context("session", engine.session().id());
+        logbook::context("model", model);
+        logbook::emit(logbook::Level::Info, "start", "ariadne",
+                      {{"version", logbook::S(kVersion)},
+                       {"endpoint", logbook::S(logbook::endpoint(base_url))},
+                       {"tools", logbook::N(static_cast<double>(reg.get_all_tool_names().size()))},
+                       {"skills", logbook::N(static_cast<double>(skill_cat ? skill_cat->size() : 0))},
+                       {"maze", logbook::B(maze->configured())},
+                       {"maze_up", logbook::B(maze->up())},
+                       {"prompt_bytes", logbook::N(static_cast<double>(system_prompt.size()))},
+                       {"max_iterations", logbook::N(static_cast<double>(max_iterations))}});
+    }
+
     // The plan reaches the model as the agent's ephemeral prompt, which the tape engine takes:
     // the todo results carry it inside an epoch, a rebase's turn 0 after one. Nothing rides the
     // tail, so the checkpoint in front of the answer stays good for the next call. An empty
@@ -1682,8 +1776,20 @@ int main(int argc, char** argv) {
     }
     for (const auto& e : boot_errors) scene.error(e);
     if (engine.on_stats) engine.on_stats(engine.stats());
-    if (maze_url.empty()) scene.note("no mazemaker server: the tape forgets what ages out and nothing brings it back");
-    else if (!maze->up()) scene.error("mazemaker at " + maze_url + " is not answering: rebases cannot recall, soaks spool to " + work);
+    // Mazemaker is an organ, not an option: it is what turns the tape into a memory that outlives the
+    // window, the process and the session. Its absence is a fault of this run, said as one, and every
+    // record the run writes afterwards is worth less because of it — so it is also the first warn.
+    if (maze_url.empty()) {
+        scene.error("no mazemaker server: the harness is amnesiac this run — the tape forgets what ages out, "
+                    "rebase recalls nothing, and no turn is written back");
+        dd::core::logbook::emit(dd::core::logbook::Level::Warn, "maze", "absent",
+                                {{"why", dd::core::logbook::S("no enabled http MCP server answers mazemaker_recall")}});
+    } else if (!maze->up()) {
+        scene.error("mazemaker at " + maze_url + " is not answering: rebases cannot recall, soaks spool to " + work);
+        dd::core::logbook::emit(dd::core::logbook::Level::Warn, "maze", "down",
+                                {{"url", dd::core::logbook::S(dd::core::logbook::endpoint(maze_url))},
+                                 {"spool", dd::core::logbook::S(work)}});
+    }
 
     std::function<void()> flush_inline;
     agent.step_hook = [&](const dd::core::Message& m) {
@@ -1969,7 +2075,8 @@ int main(int argc, char** argv) {
             } else if (cmd == "/help") {
                 scene.note("enter send · esc / ctrl-c interrupt · ↑↓ history · ctrl-←→ words · pgup/pgdn or wheel scroll (over the tools box: that list) · "
                            "ctrl-l redraw · tab completes\n/effort off|low|…  /reasoning <effort>|show|full|hide  /verbose quiet|normal|full  /context  /rebase  "
-                           "/resume  /retry (ask the last question again)  /tools  /turns N  /plan  /clear (new session)  /learn  /mcp  /<server>  /interrupt  /quit");
+                           "/resume  /retry (ask the last question again)  /tools  /turns N  /plan  /clear (new session)  /learn  /mcp  /<server>  /interrupt  /quit\\n"
+                           "/verbose quiet|normal|full (the deck AND the log)  /log off|error|warn|info|debug|full (the file alone; bare: level, path, counts)");
             } else if (cmd == "/learn") {
                 if (learn_pin) run_cmd("learn", [&] {
                     learn_pin();
@@ -1980,27 +2087,59 @@ int main(int argc, char** argv) {
                 std::string all;
                 for (const auto& n : reg.get_all_tool_names()) all += (all.empty() ? "" : "  ") + n;
                 scene.note(std::to_string(tool_count) + " tools: " + all);
-            } else if (cmd == "/verbose") {
+            } else if (cmd == "/verbose" || cmd == "/log") {
+                // One word for the operator, two surfaces for the machine. /verbose is the display
+                // AND the file's level, because that is what an operator means by "verbose full";
+                // /log moves the file alone, for a quiet deck that still records everything. They
+                // speak different vocabularies on purpose: the deck has three words, the file six.
                 const std::string arg = trim_ws(p.substr(cmd.size()));
                 using dd::ui::Verbosity;
-                if (arg.empty()) {
+                using dd::core::logbook::Level;
+                const bool display = cmd == "/verbose";
+                auto log_note = [] {
+                    const std::string path = dd::core::logbook::path();
+                    return std::string("log ") + dd::core::logbook::word(dd::core::logbook::level()) +
+                           (path.empty() ? " (no file)" : " → " + path);
+                };
+                auto pair_log = [](Verbosity v) {
+                    dd::core::logbook::set_level(v == Verbosity::Minimal ? Level::Error
+                                                : v == Verbosity::Verbose ? Level::Full
+                                                                          : Level::Info);
+                };
+                auto deck_note = [](Verbosity v) {
+                    return v == Verbosity::Minimal ? std::string("verbose off — cards fold to a glance")
+                         : v == Verbosity::Verbose ? std::string("verbose on — full arguments, results, reasoning, accounting")
+                                                   : std::string("verbose normal");
+                };
+                if (arg.empty() && !display) {
+                    scene.note(log_note() + " · " + std::to_string(dd::core::logbook::written()) + " records, " +
+                               std::to_string(dd::core::logbook::lost()) + " lost");
+                } else if (arg.empty()) {
                     const Verbosity v = scene.verbosity() == Verbosity::Verbose ? Verbosity::Normal : Verbosity::Verbose;
                     scene.set_verbosity(v);
-                    scene.note(v == Verbosity::Minimal ? "verbose off — cards fold to a glance"
-                               : v == Verbosity::Verbose ? "verbose on — full arguments, results, reasoning, accounting"
-                               : "verbose normal");
-                } else if (!dd::ui::is_verbosity_word(arg)) {
-                    // Anything outside the table changes nothing and says what was kept. Falling
-                    // through to Normal used to report "verbose normal" while quietly dropping a
-                    // level the caller never asked to drop: /verbose 1 on a verbose scene silenced
-                    // the deck and described the change as if it had been made to normal.
-                    scene.note("verbose \"" + arg + "\" names no level — kept " + dd::ui::verbosity_label(scene.verbosity()));
+                    pair_log(v);
+                    scene.note(deck_note(v) + " · " + log_note());
+                } else if (display) {
+                    if (!dd::ui::is_verbosity_word(arg)) {
+                        // Anything outside the table changes nothing and says what was kept. Falling
+                        // through to Normal used to report "verbose normal" while quietly dropping a
+                        // level the caller never asked to drop: /verbose 1 on a verbose scene silenced
+                        // the deck and described the change as if it had been made to normal.
+                        scene.note("verbose \"" + arg + "\" names no level — kept " + dd::ui::verbosity_label(scene.verbosity()));
+                    } else {
+                        const Verbosity v = dd::ui::verbosity_from_word(arg);
+                        scene.set_verbosity(v);
+                        pair_log(v);
+                        scene.note(deck_note(v) + " · " + log_note());
+                    }
                 } else {
-                    const Verbosity v = dd::ui::verbosity_from_word(arg);
-                    scene.set_verbosity(v);
-                    scene.note(v == Verbosity::Minimal ? "verbose off — cards fold to a glance"
-                               : v == Verbosity::Verbose ? "verbose on — full arguments, results, reasoning, accounting"
-                               : "verbose normal");
+                    bool ok = false;
+                    const Level l = dd::core::logbook::from_word(arg, &ok);
+                    if (!ok) scene.note("log \"" + arg + "\" names no level — kept " + dd::core::logbook::word(dd::core::logbook::level()));
+                    else {
+                        dd::core::logbook::set_level(l);
+                        scene.note(log_note());
+                    }
                 }
             } else if (cmd == "/plan") {
                 if (!todos.has_items()) {

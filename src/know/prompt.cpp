@@ -65,6 +65,51 @@ std::string PromptComposer::catalogue_map(const std::vector<std::string>& lines)
     return "Catalogues you can search:\n" + body;
 }
 
+std::string PromptComposer::harness_contract(const Harness& h) {
+    // The one section that says what the model is inside. It exists because a model that is told
+    // only "here are tools" reads Ariadne as an anonymous chat box: it guesses paths, re-asks what
+    // memory already holds, and never reaches for a child. Every sentence names a capability this
+    // turn actually has — a child, which cannot delegate, does not get the delegation line.
+    std::string s = "## The harness\n";
+    s += "You are the model inside Ariadne " + (h.version.empty() ? std::string("(the C++ agent harness)") : h.version) +
+         ", a C++ agent harness: this prompt, the tape that carries the conversation, and " +
+         (h.tools ? std::to_string(h.tools) + " tools" : std::string("the tools")) + ".\n";
+    s += "- Tools: read_file / write_file / edit_file / list_dir on paths, run_terminal for a shell, "
+         "job to start and watch a long command";
+    if (h.background) s += " (its status/wait/kill live under job)";
+    s += ", todo for the plan.\n";
+    if (h.memory)
+        s += "- Memory: mazemaker is the harness's past. Every finished turn is written to it, recall for a "
+             "turn is attached to you automatically, and mazemaker_recall / mazemaker_get / mazemaker_think "
+             "ask it directly. When the work ends with a fact worth keeping (a decision, a path, a number), "
+             "save it with mazemaker_remember.\n";
+    else
+        s += "- Memory: no mazemaker server is configured for this home, so nothing is recalled for you and no\n"
+             "  turn is written back. Say so rather than guessing at history.\n";
+    if (h.skills)
+        s += "- Skills: the catalogue map below names what exists; find(\"what you are doing\") ranks skills, "
+             "memories and deferred tools, skills_list(\"<group>\") names them, read_file(\"skill://<name>\") opens one.\n";
+    if (h.delegate)
+        s += "- Delegation: delegate_task with tasks:[{goal,context},…] (up to three) runs children in "
+             "PARALLEL, each with its own transcript, the same working directory and the same tools; read "
+             "the same files twice rather than delegating a task you could finish in one call. Results "
+             "come back in task order; a child cannot delegate further. A batch holds the turn until it "
+             "finishes unless you say action:\"start\": that returns a job_id at once, and the children run "
+             "on while you do other work — action:\"status\" polls, \"wait\" blocks, \"collect\" takes the "
+             "results, \"kill\" stops them. Collect before the turn ends; the results are all that survives it.\n";
+    if (h.depth == 0)
+        s += "- You are the top-level turn: the operator reads your answer, so make it the finding, not a "
+             "log of the steps.\n";
+    else
+        s += "- You are a delegate child (depth " + std::to_string(h.depth) +
+             "): your summary is the only thing the parent sees. Report what you did, what you found, the "
+             "files you touched and what failed.\n";
+    s += "- The tape compresses the middle of a long conversation and keeps the plan when it rebases: a "
+         "fact that must survive belongs in the plan (todo) or in memory, not in a sentence you hope is "
+         "still there.\n";
+    return s;
+}
+
 PromptComposer::Instructions PromptComposer::instructions_mode(const std::string& configured, bool is_maze) {
     std::string c;
     for (char ch : configured) c.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(ch))));

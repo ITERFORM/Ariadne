@@ -9,6 +9,7 @@
 #include <thread>
 
 #include "dd/core/json.hpp"
+#include "dd/core/logbook.hpp"
 #include "dd/core/park.hpp"
 #include "dd/know/text.hpp"
 
@@ -136,6 +137,13 @@ std::string Router::reattach() const {
 
 void Router::note_opened(const Uri& u, const std::string& title, size_t bytes) {
     ++stats_.opened_by_model;
+    // The other half of an offer, and the one the knowledge.jsonl cannot carry: that file records the
+    // router's own auto-opens, so without this line the question "did the model open what it was
+    // offered, and how long after" has no answer in any log. Tool threads call this.
+    dd::core::logbook::emit(dd::core::logbook::Level::Debug, "router", "open",
+                            {{"uri", dd::core::logbook::S(u.str())},
+                             {"title", dd::core::logbook::S(title)},
+                             {"bytes", dd::core::logbook::N(static_cast<double>(bytes))}});
     Opened o{u, title, bytes};
     if (opened_q_.publish_any(std::move(o))) return;
     // The ring is full, so the open cannot reach the agent thread's demand channel. It is not
@@ -558,6 +566,22 @@ std::optional<Delivery> Router::late() {
 }
 
 void Router::log(const char* signal, const Delivery& d, const std::string& reason, const char* deep) const {
+    // The file the operator reads is one log, not two: the router's own jsonl stays (the bench and
+    // the refusal fold read it), and the same fact lands in the logbook so a single tail shows the
+    // offer beside the tool call that followed it and the turn it belonged to. Debug: it is per
+    // signal, and every turn has several.
+    if (dd::core::logbook::on(dd::core::logbook::Level::Debug)) {
+        std::vector<std::string> offered, opened;
+        for (const auto& u : d.offered) offered.push_back(u.str());
+        for (const auto& u : d.opened) opened.push_back(u.str());
+        dd::core::logbook::emit(dd::core::logbook::Level::Debug, "router", signal ? signal : "signal",
+                                {{"why", dd::core::logbook::S(utf8_head(reason, 160))},
+                                 {"offered", dd::core::logbook::A(offered)},
+                                 {"opened", dd::core::logbook::A(opened)},
+                                 {"tokens", dd::core::logbook::N(static_cast<double>(deliver_.tokens(d.note)))},
+                                 {"deep", dd::core::logbook::S(deep ? deep : "none")},
+                                 {"ms", dd::core::logbook::N(d.ms)}});
+    }
     if (!on_log) return;
     using core::Json;
     auto sp = [](Json v) { return std::make_shared<Json>(std::move(v)); };

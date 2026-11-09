@@ -3,6 +3,7 @@
 
 #include "dd/context/fsutil.hpp"
 #include "dd/core/json.hpp"
+#include "dd/core/logbook.hpp"
 #include "dd/net/http.hpp"
 #include "dd/tools/mcp.hpp"
 
@@ -144,9 +145,31 @@ std::string Maze::call(const std::string& tool, const std::string& args_json, lo
     } catch (...) {
         return "";
     }
+    // The pod is the harness's memory, not a plugin: a call that fails is a warn (recall went with
+    // it), a call that answers is a debug line with its size and its wait. `tool` says which of the
+    // memory verbs was used, and the args' head says what was asked.
+    const auto t0 = std::chrono::steady_clock::now();
     const tools::McpResult r = mcp.call_ex(tool, args);
     const bool good = r.ok && !r.is_error;   // an empty reply that was answered is still an answer
     if (mark) up_.store(good, std::memory_order_relaxed);
+    {
+        using namespace dd::core;
+        const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+        if (good) {
+            logbook::at(logbook::Level::Debug, "maze", "call", [&](Json& rec) {
+                obj_set(rec, "tool", json_str(tool));
+                obj_set(rec, "ms", json_num(ms));
+                obj_set(rec, "out_bytes", json_num(static_cast<double>(r.text.size())));
+                if (logbook::on(logbook::Level::Full)) obj_set(rec, "args", json_str(logbook::head(args_json, 400)));
+            });
+        } else {
+            logbook::emit(logbook::Level::Warn, "maze", "call.fail",
+                          {{"tool", logbook::S(tool)},
+                           {"ms", logbook::N(ms)},
+                           {"why", logbook::S(logbook::head(r.error.empty() ? std::string("no answer") : r.error, 240))},
+                           {"args", logbook::S(logbook::head(args_json, 200))}});
+        }
+    }
     return good ? r.text : std::string();
 }
 

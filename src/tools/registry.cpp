@@ -1,5 +1,6 @@
 #include "dd/tools/registry.hpp"
 #include "dd/core/json.hpp"
+#include "dd/core/logbook.hpp"
 
 #include <algorithm>
 #include <set>
@@ -13,9 +14,13 @@ static constexpr std::size_t DEFAULT_RESULT_SIZE_CHARS = 100000;
 void ToolRegistry::register_tool(const ToolEntry& entry) {
     auto it = tools_.find(entry.name);
     if (it != tools_.end() && it->second.toolset != entry.toolset) {
-        // Tool name collision across toolsets: warn, then overwrite.
-        std::cerr << "[warn] Tool name collision: '" << entry.name << "' (toolset '"
-                  << it->second.toolset << "') overwritten by '" << entry.toolset << "'\n";
+        // Tool name collision across toolsets: warn, then overwrite. The registry is a library
+        // layer, so the warning goes to the logbook and never to the terminal: a line written from
+        // here lands wherever the caller's stdout points, which during a turn is the deck.
+        dd::core::logbook::emit(dd::core::logbook::Level::Warn, "tool", "collision",
+                                {{"name", dd::core::logbook::S(entry.name)},
+                                 {"from", dd::core::logbook::S(it->second.toolset)},
+                                 {"to", dd::core::logbook::S(entry.toolset)}});
     }
     tools_[entry.name] = entry;
     if (entry.check_fn && !toolset_checks_.count(entry.toolset))
@@ -138,6 +143,7 @@ std::map<std::string, std::string> ToolRegistry::get_tool_to_toolset_map() const
 
 std::vector<dd::core::Json> ToolRegistry::get_definitions(const std::vector<std::string>& tool_names,
                                                           bool quiet) const {
+    (void)quiet;   // kept for the header's Python-faithful signature; the warning it gated is a log record now
     std::vector<dd::core::Json> result;
     std::vector<std::string> sorted(tool_names);
     std::sort(sorted.begin(), sorted.end());
@@ -149,7 +155,11 @@ std::vector<dd::core::Json> ToolRegistry::get_definitions(const std::vector<std:
             bool ok = true;
             try { ok = static_cast<bool>(e.check_fn()); } catch (...) { ok = false; }
             if (!ok) {
-                if (!quiet) std::cerr << "[debug] Tool " << name << " unavailable (check failed)\n";
+                // A tool whose requirement check failed is not on this turn's deck. That is a
+                // fact about the run, not a line for the operator's screen mid-turn.
+                dd::core::logbook::emit(dd::core::logbook::Level::Debug, "tool", "unavailable",
+                                        {{"name", dd::core::logbook::S(name)},
+                                         {"why", dd::core::logbook::S("requirement check failed")}});
                 continue;
             }
         }

@@ -75,7 +75,12 @@ public:
     // and only a request field says which one answers. Merged before the harness's own
     // fields, so a name here can add a field but never replace one we decided.
     core::Json extra;
+    // Two stops, because a call can be ended by two different authorities. `cancel` is the turn's
+    // own Esc (one flag per process, bound beside the Agent). `cancel2` is the batch this call
+    // belongs to: a delegate job killed on its own must not stop the turn that started it, and Esc
+    // must still stop every child of every job. Either one ends the wire call.
     const std::atomic<bool>* cancel = nullptr;
+    const std::atomic<bool>* cancel2 = nullptr;
     std::function<std::string()> effort;          // reasoning_effort to send, "" = the server's default
     std::function<void(core::Json& body)> shape;  // endpoint fields (dd/context Endpoint)
     std::function<void()> on_begin;

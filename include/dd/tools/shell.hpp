@@ -31,6 +31,9 @@ struct ShellOptions {
     long timeout_ms = kForegroundTimeoutMs;     // wall clock for the whole process group; <= 0: none
     size_t max_output = 8000;                   // bytes handed back; the rest is read and dropped, never held
     const std::atomic<bool>* cancel = nullptr;  // set: the group is killed and the call returns
+    // A second stop, for a call that belongs to a batch: killing one delegate job must end its
+    // shell too, without ending the turn that started the job. Either flag ends the call.
+    const std::atomic<bool>* cancel2 = nullptr;
 };
 
 // {"cmd","exit","stdout"} (+ "signal", "truncated"/"output_bytes", "background_still_running"), or {"error",...}
@@ -56,6 +59,7 @@ constexpr int kJobWaitDefaultS = 30;
 struct JobOptions {
     size_t max_output = 8000;                   // bytes of new output handed back per look
     const std::atomic<bool>* cancel = nullptr;  // set: a wait returns at once
+    const std::atomic<bool>* cancel2 = nullptr; // ... and the batch this call belongs to
 };
 
 std::string start_job(const std::string& cmd, const ShellPolicy& policy = {});

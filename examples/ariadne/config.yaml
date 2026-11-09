@@ -59,6 +59,19 @@ display:
   show_reasoning: true     # false starts with reasoning cards folded to one line
   verbose: normal          # off | normal | full — /verbose at runtime, DD_VERBOSE for the environment
 
+# The logbook: one JSON-lines file under <home>/logs, one record per event, never a line on the TUI.
+# The level decides what is written, not what is shown: display.verbose also sets it (/verbose full =
+# full log), and /log moves the file alone, for a quiet deck that still records everything.
+#   off    nothing at all
+#   error  failures only
+#   warn   + a missing pod, a refused card, a deck that cannot draw
+#   info   + starts, turns, delegate spawn/join, slow tools, retries          (the default)
+#   debug  + every tool call, every wire request, every router signal and open
+#   full   + the heads of the payloads (arguments, request body, tool result)  — "maximum verbose"
+logging:
+  level: info              # off | error | warn | info | debug | full — DD_LOG overrides for one run
+  path: ""                 # empty: <home>/logs/harness.jsonl; a path may use ~
+
 # The context tape: what each request carries.
 context:
   payload_tape: true       # render once, append only; false renders every call from scratch
@@ -97,7 +110,9 @@ knowledge:
   deep_ms: 8000            # a turn start waits UP TO this long for the pod's recall: a local pod answers at once, a pod
                            # on another machine gets longer than one turn. Patience, not a deadline -- a late answer is
                            # carried into the next turn, never dropped. After the first answer, the wait is measured.
-  deep_recall_ms: 60000    # ... and this long when the question is about the past ("what did we decide ...")
+  deep_recall_ms: 20000    # ... and this long when the question is about the past ("what did we decide ..."). It is
+                           # also the CEILING the measured patience may climb to: a pod that once took 40 s must not
+                           # make every later turn wait 50 s. 60 s of a blocked turn is never a good trade.
   proactive: true          # ask the pod BETWEEN turns, about the open ledger and the question just answered, so the next
                            # question finds its answer already being written. A question that arrives while it runs takes
                            # that answer over; a guess nobody took rides the next turn as background.
@@ -108,7 +123,17 @@ knowledge:
   confidence:              # calibrated with `dd replay` on real prompts against the real catalogue
     offer_score: 0.15      # a skill is offered when it holds this share of the question's evidence ...
     offer_mass: 9.5        # ... and that is this much evidence in absolute terms, fitted at 502 skills
-    open_score: 0.40       # at this share the head of the skill is opened for the model
+    calibrated_at: 502     # the size the mass was fitted at; needed() rescales by ln(catalogue size)
+    open_score: 0.40       # at this share the head of the skill is opened for the model: below it a pointer only
+    memory_offer_mass: 8.0 # curated rows are long and their pointers convert poorly (a pointer need not be opened
+    memory_offer_score: 0.20 # to be useful), so the bar moves half as far as the skill bar, not as far
+  refusal:                 # a card offered often and opened almost never does not keep a slot (docs/KNOWLEDGE.md)
+    enabled: true
+    offers: 8              # decayed offers ...
+    floor: 0.15            # ... with conversion lower bound under this: refused
+    probe_turns: 12        # ... and it is offered once every this many turns, never silenced. Raise it for a
+                           # catalogue full of learned `flow-*` cards: they echo the words of shell commands and
+                           # matched 14% of all offers here while never being opened.
   rank:                    # BM25F field weights
     name: 8
     tags: 3

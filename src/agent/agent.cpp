@@ -3,6 +3,7 @@
 #include "dd/agent/iteration_budget.hpp"
 #include "dd/core/message.hpp"
 #include "dd/core/json.hpp"
+#include "dd/core/logbook.hpp"
 #include "dd/tools/registry.hpp"
 
 #include <algorithm>
@@ -286,12 +287,27 @@ std::string Agent::handle_max_iterations(std::vector<core::Message>& messages, i
 // ---- run loop (run_agent.py:10202) ----
 // Whatever ends the turn, the engine's turn is closed once: a call that throws (an Esc during generation) included.
 std::string Agent::run(const std::string& user_message) {
+    // The turn's two ends. A turn is the unit an operator reasons in, so both lines are info: the
+    // question's size and the budget on the way in, the iterations, the wait and the cut on the way
+    // out. A delegate child logs here too, and `depth` is what tells the two apart.
+    using namespace dd::core;
+    const auto t0 = std::chrono::steady_clock::now();
+    logbook::emit(logbook::Level::Info, "agent", "turn.start",
+                  {{"model", logbook::S(model)},
+                   {"in_bytes", logbook::N(static_cast<double>(user_message.size()))},
+                   {"prompt_bytes", logbook::N(static_cast<double>(system_prompt.size()))},
+                   {"max_iterations", logbook::N(static_cast<double>(max_iterations))},
+                   {"depth", logbook::N(static_cast<double>(delegate_depth))}});
     if (context) context->begin_turn(user_message);
     bool interrupted = false;
     std::string final_response;
     try {
         final_response = run_loop(user_message, interrupted);
     } catch (...) {
+        logbook::emit(logbook::Level::Error, "agent", "turn.throw",
+                      {{"ms", logbook::N(std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count())},
+                       {"iterations", logbook::N(static_cast<double>(api_call_count))},
+                       {"depth", logbook::N(static_cast<double>(delegate_depth))}});
         if (context) {
             try {
                 context->end_turn("", true);
@@ -300,6 +316,12 @@ std::string Agent::run(const std::string& user_message) {
         }
         throw;
     }
+    logbook::emit(logbook::Level::Info, "agent", "turn.end",
+                  {{"ms", logbook::N(std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count())},
+                   {"iterations", logbook::N(static_cast<double>(api_call_count))},
+                   {"out_bytes", logbook::N(static_cast<double>(final_response.size()))},
+                   {"cut", logbook::B(interrupted || interrupt_requested.load())},
+                   {"depth", logbook::N(static_cast<double>(delegate_depth))}});
     if (context) context->end_turn(final_response, interrupted || interrupt_requested.load());
     return final_response;
 }
@@ -333,6 +355,13 @@ std::string Agent::run_loop(const std::string& user_message, bool& interrupted) 
             if (!quiet_mode)
                 std::cerr << "\nIteration budget exhausted (" << budget->used.load() << "/"
                           << budget->max_total << " iterations used)\n";
+            // A budget that ran out is a turn that ended for a reason the operator must be able to
+            // find afterwards; on the deck it is silent by design (quiet_mode), so the file is the
+            // only place it can live.
+            core::logbook::emit(core::logbook::Level::Warn, "agent", "budget.exhausted",
+                                {{"used", core::logbook::N(static_cast<double>(budget->used.load()))},
+                                 {"max", core::logbook::N(static_cast<double>(budget->max_total))},
+                                 {"depth", core::logbook::N(static_cast<double>(delegate_depth))}});
             break;
         }
 

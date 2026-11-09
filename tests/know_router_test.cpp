@@ -21,6 +21,7 @@
 #include "dd/know/skills.hpp"
 #include "dd/know/trigger.hpp"
 #include "dd/know/working_set.hpp"
+#include "dd/core/logbook.hpp"
 
 namespace fs = std::filesystem;
 using namespace dd;
@@ -635,6 +636,34 @@ static void test_router_turn(const fs::path& tmp) {
     const int recalls_before = s->pod->recalls.load();
     chk(s->router->on(triv).note.empty() && s->pod->recalls.load() == recalls_before, "router: a trivial turn looks nothing up (no pod call)");
     chk(!s->logs.empty() && has(s->logs[0], "\"signal\":\"turn\"") && has(s->logs[0], "skill://"), "router: a log line says what was offered");
+}
+
+// The open a MODEL makes (read_file("skill://…") / skill_load) is the other half of an offer, and the
+// one the router's own jsonl cannot carry. It has to reach the logbook, or the question "did the model
+// open what it was offered" has no answer anywhere.
+static void test_model_open_is_logged(const fs::path& tmp) {
+    const fs::path log = tmp / "harness-open.jsonl";
+    fs::remove(log);
+    core::logbook::init(log.string(), core::logbook::Level::Debug);
+    auto s = make_stack(tmp, "openlog");
+    Uri u;
+    u.kind = Kind::Skill;
+    u.id = "podman-deep-dive";
+    const auto body = s->router->open(u);
+    core::logbook::close();
+    chk(body.has_value(), "logbook: the model's open still returns the body");
+    std::ifstream in(log);
+    std::string line, found;
+    int n = 0;
+    while (std::getline(in, line)) {
+        if (line.find("\"cat\":\"router\"") != std::string::npos && line.find("\"ev\":\"open\"") != std::string::npos) {
+            found = line;
+            ++n;
+        }
+    }
+    chk(n == 1, "logbook: a model open writes exactly one router/open record");
+    chk(has(found, "skill://podman-deep-dive") && has(found, "\"bytes\":") && has(found, "\"lvl\":\"debug\""),
+        "logbook: the open record names the uri, its size and its level");
 }
 
 static void test_router_open_head(const fs::path& tmp) {
@@ -1302,6 +1331,7 @@ int main() {
     test_refresher_parks();
     test_router_turn(tmp);
     test_router_open_head(tmp);
+    test_model_open_is_logged(tmp);
     test_router_budget(tmp);
     test_router_deep(tmp);
     test_router_prefetch(tmp);

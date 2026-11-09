@@ -47,6 +47,11 @@ def make_vars():
     text = pathlib.Path(ROOT / "Makefile").read_text()
     for f in sorted((ROOT / "mk").glob("*.mk")):
         text += "\n" + f.read_text()
+    # A backslash-newline continues the assignment, and make reads the whole thing. Reading it as
+    # one line matters: LIMBO's definition spans two, and the single-line reading silently dropped
+    # src/limbo/level.cpp and src/limbo/minos.cpp from every product — the wiring check then called
+    # two linked TUs unwired, which is a false report in the direction that hides a real one.
+    text = re.sub(r"\\[ \t]*\n[ \t]*", " ", text)
     return {m.group(1): m.group(2) for m in re.finditer(r"([A-Z0-9_]+)\s*:?=\s*(.+)", text)}
 
 

@@ -3,6 +3,7 @@
 
 #include "dd/agent/chat_stream.hpp"
 #include "dd/agent/retry.hpp"
+#include "dd/core/logbook.hpp"
 #include "dd/net/http.hpp"
 #include "dd/tools/url_safety.hpp"
 
@@ -42,6 +43,7 @@ struct StreamSink {
     long retry_after_s = 0;   // the server's own Retry-After, read off the response headers
     std::vector<std::pair<std::string, std::string>> headers;   // the ones worth reading, in arrival order
     const std::atomic<bool>* cancel = nullptr;
+    const std::atomic<bool>* cancel2 = nullptr;   // this batch's own kill, beside the turn's Esc
     curl_off_t recv = 0;    // bytes the write callback has seen
     long stall_s = 0;       // 0 = no stall guard
     curl_off_t last_recv = 0;
@@ -55,9 +57,15 @@ struct StreamSink {
     bool completed = false;   // the stream reached `data: [DONE]`: the turn is over, the socket may not be
 };
 
+// Either authority ends the call: the turn's Esc (`cancel`) or the batch this call belongs to
+// (`cancel2`). One predicate so no site can honour one and forget the other.
+bool stopped(const std::atomic<bool>* a, const std::atomic<bool>* b) {
+    return (a && a->load(std::memory_order_relaxed)) || (b && b->load(std::memory_order_relaxed));
+}
+
 int abort_if(void* ud, curl_off_t, curl_off_t, curl_off_t, curl_off_t) {
     auto* s = static_cast<StreamSink*>(ud);
-    if (s->cancel && s->cancel->load(std::memory_order_relaxed)) return 1;
+    if (stopped(s->cancel, s->cancel2)) return 1;
     if (s->stall_s <= 0) return 0;
     const auto now = std::chrono::steady_clock::now();
     if (!s->seen) {
@@ -123,7 +131,7 @@ std::size_t stream_header_cb(char* p, std::size_t, std::size_t n, void* ud) {
 
 std::size_t stream_sink(char* p, std::size_t, std::size_t n, void* ud) {
     auto* s = static_cast<StreamSink*>(ud);
-    if (s->cancel && s->cancel->load(std::memory_order_relaxed)) return 0;
+    if (stopped(s->cancel, s->cancel2)) return 0;
     if (s->total + static_cast<curl_off_t>(n) > s->max_bytes) {   // hard byte cap, like net::sink
         s->over = true;
         return 0;
@@ -189,14 +197,14 @@ std::string why(CURLcode rc, long status, StreamSink& s, bool cancelled) {
 // Wait the backoff out in slices, so an Esc during the pause ends it inside one slice
 // rather than after the whole wait — the loop's tool-delay idiom. False means the
 // operator cut the call while it was waiting.
-bool wait_backoff(double ms, const std::atomic<bool>* stop) {
+bool wait_backoff(double ms, const std::atomic<bool>* stop, const std::atomic<bool>* stop2 = nullptr) {
     const auto end = std::chrono::steady_clock::now() + std::chrono::duration<double, std::milli>(ms);
     while (std::chrono::steady_clock::now() < end) {
-        if (stop && stop->load(std::memory_order_acquire)) return false;
+        if (stopped(stop, stop2)) return false;
         const auto left = std::chrono::duration_cast<std::chrono::duration<double, std::milli>>(end - std::chrono::steady_clock::now());
         std::this_thread::sleep_for(std::min(left, std::chrono::duration<double, std::milli>(50.0)));
     }
-    return !(stop && stop->load(std::memory_order_acquire));
+    return !stopped(stop, stop2);
 }
 
 // A slow endpoint is visible instead of mysterious: the reply says how many sends it took.
@@ -454,6 +462,21 @@ core::Message HttpLLM::chat(const std::vector<core::Message>& messages, const Js
 
     const int sends = retry_attempts > 1 ? retry_attempts : 1;
     const auto t0 = std::chrono::steady_clock::now();   // the caller's wait: every send and every pause in it
+    // The wire's own record. debug per send (this is every call the model makes), with the endpoint
+    // host, the payload's size, the message count and the tool count; full adds the body's head.
+    // The url is a host, never the key: a provider puts tokens in the path and the query.
+    if (dd::core::logbook::on(dd::core::logbook::Level::Debug)) {
+        using namespace dd::core;
+        logbook::at(logbook::Level::Debug, "wire", "send", [&](Json& rec) {
+            obj_set(rec, "endpoint", json_str(dd::core::logbook::endpoint(endpoint)));
+            obj_set(rec, "model", json_str(model));
+            obj_set(rec, "messages", json_num(static_cast<double>(messages.size())));
+            obj_set(rec, "tools", json_num(static_cast<double>(tools.type == Json::Arr ? tools.arr.size() : 0)));
+            obj_set(rec, "payload_bytes", json_num(static_cast<double>(payload.size())));
+            obj_set(rec, "sends", json_num(static_cast<double>(sends)));
+            if (logbook::on(logbook::Level::Full)) obj_set(rec, "body", json_str(logbook::head(payload, 800)));
+        });
+    }
     std::string last;   // the failure the caller finally gets, in curl's own words
     // What the send loop did to this call, for the operator who asked to see the wire: the pause
     // it sat through, and the status that made it sit. A rate limit that cleared is invisible
@@ -465,6 +488,7 @@ core::Message HttpLLM::chat(const std::vector<core::Message>& messages, const Js
     for (int attempt = 1; attempt <= sends; ++attempt) {
         StreamSink sink;
         sink.cancel = cancel;
+        sink.cancel2 = cancel2;
         sink.stall_s = stall_timeout_s;
         // A delta that reached the caller marks this call as spoken: a second send of a
         // stream that already spoke would hand the same words out a second time.
@@ -517,7 +541,7 @@ core::Message HttpLLM::chat(const std::vector<core::Message>& messages, const Js
         curl_easy_getinfo(c, CURLINFO_RESPONSE_CODE, &status);
         // Only curl stopping counts as a cut: an Esc that lands after the answer arrived
         // still hands back that answer, exactly as it did before the send loop existed.
-        const bool flag = cancel && cancel->load(std::memory_order_relaxed);
+        const bool flag = stopped(cancel, cancel2);
         // A write error with the terminator already seen is the reader stopping on its own,
         // even if Esc landed in the same instant: the answer arrived, so it is kept.
         const bool cancelled = (rc == CURLE_ABORTED_BY_CALLBACK && !sink.stalled)
@@ -585,37 +609,67 @@ core::Message HttpLLM::chat(const std::vector<core::Message>& messages, const Js
                     st.cached_tokens = static_cast<long>(num_at(*u, "prompt_tokens_details", "cached_tokens"));
                 on_stats(st);
             }
+            // The answer, in the terms the operator asks about later: how long the call took, how
+            // many sends it needed, what the tokens were and how many came from the cache.
+            dd::core::logbook::at(dd::core::logbook::Level::Debug, "wire", "done", [&](Json& rec) {
+                core::obj_set(rec, "endpoint", core::json_str(dd::core::logbook::endpoint(endpoint)));
+                core::obj_set(rec, "model", core::json_str(model));
+                core::obj_set(rec, "status", core::json_num(static_cast<double>(status)));
+                core::obj_set(rec, "attempt", core::json_num(static_cast<double>(attempt)));
+                core::obj_set(rec, "ms", core::json_num(std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count()));
+                core::obj_set(rec, "out_bytes", core::json_num(static_cast<double>(assistant.content.size())));
+                core::obj_set(rec, "reasoning_bytes", core::json_num(static_cast<double>(assistant.reasoning.size())));
+                core::obj_set(rec, "prompt_tokens", core::json_num(num_at(resp, "usage", "prompt_tokens")));
+                core::obj_set(rec, "completion_tokens", core::json_num(num_at(resp, "usage", "completion_tokens")));
+                core::obj_set(rec, "cached_tokens", core::json_num(num_at(resp, "timings", "cache_n")));
+                core::obj_set(rec, "waited_ms", core::json_num(waited_ms));
+            });
             return assistant;
         }
 
         last = why(rc, status, sink, cancelled);
+        // Every exit below is a failure the caller will see; each one is a line while it is still
+        // known why, with the status the server gave and the attempt that got it.
+        auto wire_fail = [&](const char* reason) {
+            dd::core::logbook::emit(dd::core::logbook::Level::Error, "wire", "fail",
+                                    {{"endpoint", core::logbook::S(dd::core::logbook::endpoint(endpoint))},
+                                     {"status", core::logbook::N(static_cast<double>(status))},
+                                     {"attempt", core::logbook::N(static_cast<double>(attempt))},
+                                     {"ms", core::logbook::N(std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count())},
+                                     {"why", core::logbook::S(reason)},
+                                     {"said", core::logbook::S(dd::core::logbook::head(last, 240))}});
+        };
         // Only a state that can differ is sent again, and only while nothing has been handed
         // out and the budget has time for the wait. A cut call, a verdict on the request, a
         // capped body, a stalled server and the last send all end here.
-        if (!transient(f) || attempt == sends) throw std::runtime_error(with_sends(last, attempt));
+        if (!transient(f) || attempt == sends) { wire_fail("final"); throw std::runtime_error(with_sends(last, attempt)); }
         // The provider's own failure before its first token is worth one more send, not a
         // ladder's worth: a status said nothing about wanting a wait (200), and if the second
         // send comes back with the same sentence, the request is what it dislikes.
-        if (upstream_hiccup && attempt >= 2) throw std::runtime_error(with_sends(last, attempt));
+        if (upstream_hiccup && attempt >= 2) { wire_fail("upstream"); throw std::runtime_error(with_sends(last, attempt)); }
         // A PROVIDER-level 429 is a routing fact, not an instruction to this client. The number in
         // Retry-After is the endpoint's window for requests that must come BACK to that endpoint; the
         // next send may land on another one, so sitting through it is how a first prompt became three
         // minutes of "⟳ 429 · waiting 180s" against a provider that was simply saturated. Two quick
         // sends on the ladder, then the server's own sentence and the knob that decides who may route.
         const bool routed_refusal = status == 429 && last.find("Provider returned error") != std::string::npos;
-        if (routed_refusal && attempt >= 2)
+        if (routed_refusal && attempt >= 2) {
+            wire_fail("routed_refusal");
             throw std::runtime_error(with_sends(last, attempt) +
                                      " (an endpoint behind the route refused it: that is a routing fact, not a wait -- which "
                                      "providers may answer is the account's own allowed-provider setting, and a pinned or "
                                      "throttled one is the usual cause)");
+        }
         const long instruction = routed_refusal ? 0L : sink.retry_after_s;   // a refused route is not a wait
         const double left = wait_room(t0, retry_budget_ms, instruction, retry_after_cap_ms,
                                      retry_after_total_ms, instructed_spent);
         const double wait = status == 429 ? wire_rate_wait_ms(attempt, instruction, left)
                                          : wire_wait_ms(attempt, instruction, 250.0, 2000.0, left);
-        if (wait < 0.0)
+        if (wait < 0.0) {
+            wire_fail("budget_spent");
             throw std::runtime_error(budget_spent(last, attempt, instruction, retry_budget_ms,
                                                   retry_after_cap_ms, retry_after_total_ms, instructed_spent));
+        }
         if (first_status == 0) first_status = status;
         last_wait_ms = wait;
         waited_ms += wait;
@@ -625,7 +679,7 @@ core::Message HttpLLM::chat(const std::vector<core::Message>& messages, const Js
         // rate limit, an exhausted key or a pin on a throttled provider -- and say it again when the
         // wait ends. The operator can still stop the turn while it sleeps.
         if (on_wait) on_wait(status, instruction, wait, last);
-        if (!wait_backoff(wait, cancel)) throw std::runtime_error("interrupted");
+        if (!wait_backoff(wait, cancel, cancel2)) { wire_fail("interrupted"); throw std::runtime_error("interrupted"); }
         if (on_wait) on_wait(0, 0, 0.0, std::string());
     }
 

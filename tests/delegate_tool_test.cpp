@@ -2,6 +2,8 @@
 // prompt and toolset, batch order, and the report the parent's model reads.
 #include <algorithm>
 #include <atomic>
+#include <chrono>
+#include <thread>
 #include <iostream>
 #include <memory>
 #include <stdexcept>
@@ -9,6 +11,7 @@
 #include <vector>
 
 #include "dd/agent/agent.hpp"
+#include "dd/agent/http_llm.hpp"
 #include "dd/core/json.hpp"
 #include "dd/core/message.hpp"
 #include "dd/tools/delegate_tool.hpp"
@@ -44,9 +47,11 @@ struct Script : agent::LLMClient {
     std::vector<std::vector<core::Message>> requests;
     std::vector<Json> tools_seen;
     int calls = 0;
+    int delay_ms = 0;   // a child that takes real time, so "returned before it finished" is measurable
 
     core::Message chat(const std::vector<core::Message>& m, const Json& tools) override {
         ++calls;
+        if (delay_ms > 0) std::this_thread::sleep_for(std::chrono::milliseconds(delay_ms));
         requests.push_back(m);
         tools_seen.push_back(tools);
         if (die) throw std::runtime_error("wire down");
@@ -324,6 +329,209 @@ int main() {
         chk(ac && ac->num >= 2, "the blank reply cost more than one call");
         const Json* sum = json_get(*rs->arr[0], "summary");
         chk(sum && sum->type == Json::Str && !sum->str.empty(), "the epilogue is the summary");
+    }
+
+
+    // ---- the production shape: no factory, the parent's wire copied by value ----
+    // A background job must not point into the turn that started it. The deps here carry a real
+    // HttpLLM by pointer; the job copies it at start, so overwriting the original afterwards must
+    // change nothing. The endpoint is dead on purpose: the child reports the failure per child.
+    {
+        agent::Agent parent;
+        agent::HttpLLM wire;
+        wire.base_url = "http://127.0.0.1:1/v1";   // nothing listens there
+        wire.model = "dead-end";
+        wire.retry_attempts = 1;
+        wire.stall_timeout_s = 2;
+        tools::DelegateToolDeps deps;
+        deps.parent = &parent;
+        deps.transport = &wire;
+        const auto handler = tools::make_delegate_tool(deps);
+        const Json started = json_parse(handler(json_obj({{"goal", jsp(json_str("unreachable"))},
+                                                          {"action", jsp(json_str("start"))}})));
+        const Json* jid = json_get(started, "job_id");
+        chk(jid && jid->type == Json::Num, "wire copy: the job started from a transport, not a factory");
+        const int id = jid ? static_cast<int>(jid->num) : 0;
+        wire = agent::HttpLLM{};   // the job must hold its own copy
+        const Json out = json_parse(handler(json_obj({{"action", jsp(json_str("collect"))},
+                                                      {"job_id", jsp(json_num(id))}})));
+        const Json* rs = json_get(out, "results");
+        chk(rs && rs->type == Json::Arr && rs->arr.size() == 1, "wire copy: collect returns the child's entry");
+        if (rs && rs->arr.size() == 1) {
+            const Json* st = json_get(*rs->arr[0], "status");
+            chk(st && st->type == Json::Str && st->str == "error",
+                "wire copy: the unreachable endpoint is an error entry, not a crash");
+        }
+    }
+
+    // ---- the schema tells the model the background route exists ----
+    {
+        const std::string js = core::json_dump(tools::delegate_tool_schema());
+        chk(js.find("\"action\"") != std::string::npos && js.find("\"start\"") != std::string::npos &&
+                js.find("\"collect\"") != std::string::npos && js.find("\"kill\"") != std::string::npos,
+            "schema: the action enum names run/start/status/wait/collect/kill/list");
+        chk(js.find("\"job_id\"") != std::string::npos, "schema: job_id is a property");
+        chk(js.find("background") != std::string::npos, "schema: background is named");
+        chk(js.find("BLOCKS") != std::string::npos && js.find("returns at once") != std::string::npos,
+            "schema: the description says which mode blocks and which returns at once");
+    }
+
+    // ---- background delegation: the call returns while the children run ----
+    // The turn is not held hostage by a batch: `start` hands back a job_id at once, `status`
+    // reports the children mid-flight, `collect` returns their results. Measured, because
+    // "returns at once" is the whole claim.
+    {
+        agent::Agent parent;
+        ScriptPool pool;
+        auto s = std::make_shared<Script>();
+        s->replies = {text_reply("slow child done")};
+        s->delay_ms = 600;
+        pool.scripts.push_back(s);
+        const auto t0 = std::chrono::steady_clock::now();
+        const Json started = run_delegate(parent, pool, json_obj({{"goal", jsp(json_str("the slow thing"))},
+                                                                  {"action", jsp(json_str("start"))}}));
+        const double start_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+        const Json* jid = json_get(started, "job_id");
+        chk(jid && jid->type == Json::Num && jid->num >= 1, "start: a job_id comes back");
+        chk(start_ms < 250.0, "start: returned before the 600 ms child finished (" + std::to_string(start_ms) + " ms)");
+        const Json* st0 = json_get(started, "state");
+        chk(st0 && st0->type == Json::Str && st0->str == "running", "start: state is running");
+
+        const int id = jid ? static_cast<int>(jid->num) : 0;
+        const Json mid = run_delegate(parent, pool, json_obj({{"action", jsp(json_str("status"))},
+                                                              {"job_id", jsp(json_num(id))}}));
+        const Json* mid_done = json_get(mid, "done");
+        chk(mid_done && mid_done->type == Json::Num && mid_done->num == 0, "status: nothing finished yet");
+
+        const Json collected = run_delegate(parent, pool, json_obj({{"action", jsp(json_str("collect"))},
+                                                                    {"job_id", jsp(json_num(id))}}));
+        const Json* rs = json_get(collected, "results");
+        chk(rs && rs->type == Json::Arr && rs->arr.size() == 1, "collect: one result");
+        if (rs && rs->arr.size() == 1) {
+            const Json* sum = json_get(*rs->arr[0], "summary");
+            chk(sum && sum->type == Json::Str && sum->str.find("slow child done") != std::string::npos,
+                "collect: the child's summary");
+        }
+        const Json* cs = json_get(collected, "state");
+        chk(cs && cs->type == Json::Str && cs->str == "done", "collect: state done");
+        // the slot is retired: the id is gone
+        const Json gone = run_delegate(parent, pool, json_obj({{"action", jsp(json_str("status"))},
+                                                               {"job_id", jsp(json_num(id))}}));
+        const Json* ge = json_get(gone, "error");
+        chk(ge && ge->type == Json::Str && ge->str.find("no such delegate job") != std::string::npos,
+            "a collected job is gone");
+    }
+
+    // ---- kill: the batch stops, the results that existed survive, the call returns ----
+    {
+        agent::Agent parent;
+        ScriptPool pool;
+        for (int i = 0; i < 2; ++i) {
+            auto s = std::make_shared<Script>();
+            s->replies = {text_reply("never")};
+            s->delay_ms = 4000;   // would outlast the test if nothing stopped it
+            pool.scripts.push_back(s);
+        }
+        Json tasks = json_arr();
+        for (int i = 0; i < 2; ++i) arr_push(tasks, json_obj({{"goal", jsp(json_str("long " + std::to_string(i)))}}));
+        const Json started = run_delegate(parent, pool, json_obj({{"tasks", jsp(std::move(tasks))},
+                                                                  {"action", jsp(json_str("start"))}}));
+        const Json* jid = json_get(started, "job_id");
+        const int id = jid ? static_cast<int>(jid->num) : 0;
+        chk(id > 0, "kill: the batch started");
+        const auto t0 = std::chrono::steady_clock::now();
+        const Json killed = run_delegate(parent, pool, json_obj({{"action", jsp(json_str("kill"))},
+                                                                 {"job_id", jsp(json_num(id))}}));
+        const double kill_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+        chk(kill_ms < 500.0, "kill: a signal, not a reap (" + std::to_string(kill_ms) + " ms, not the children's 4 s)");
+        const Json* ks = json_get(killed, "state");
+        chk(ks && ks->type == Json::Str && ks->str == "killed", "kill: state killed");
+        const Json done = run_delegate(parent, pool, json_obj({{"action", jsp(json_str("collect"))},
+                                                               {"job_id", jsp(json_num(id))}}));
+        const Json* drs = json_get(done, "results");
+        chk(drs && drs->type == Json::Arr, "kill then collect: a results array comes back");
+        if (drs && !drs->arr.empty()) {
+            const Json* st = json_get(*drs->arr[0], "status");
+            chk(st && st->type == Json::Str && (st->str == "killed" || st->str == "interrupted"),
+                "kill then collect: the child says it was killed, not completed");
+        }
+    }
+
+    // ---- the depot is bounded, and says so ----
+    {
+        agent::Agent parent;
+        ScriptPool pool;
+        std::vector<int> ids;
+        for (int k = 0; k < tools::kDelegateMaxJobs; ++k) {
+            auto s = std::make_shared<Script>();
+            s->replies = {text_reply("slow")};
+            s->delay_ms = 1500;
+            pool.scripts.push_back(s);
+            const Json started = run_delegate(parent, pool, json_obj({{"goal", jsp(json_str("job " + std::to_string(k)))},
+                                                                      {"action", jsp(json_str("start"))}}));
+            const Json* jid = json_get(started, "job_id");
+            chk(jid && jid->type == Json::Num, "depot: job " + std::to_string(k) + " started");
+            if (jid) ids.push_back(static_cast<int>(jid->num));
+        }
+        auto s = std::make_shared<Script>();
+        s->replies = {text_reply("nope")};
+        pool.scripts.push_back(s);
+        const Json refused = run_delegate(parent, pool, json_obj({{"goal", jsp(json_str("one too many"))},
+                                                                  {"action", jsp(json_str("start"))}}));
+        const Json* re = json_get(refused, "error");
+        chk(re && re->type == Json::Str && re->str.find("delegate depot full") != std::string::npos,
+            "depot: the ninth concurrent job is refused by name");
+        const Json listed = run_delegate(parent, pool, json_obj({{"action", jsp(json_str("list"))}}));
+        const Json* jobs = json_get(listed, "jobs");
+        chk(jobs && jobs->type == Json::Arr && static_cast<int>(jobs->arr.size()) == tools::kDelegateMaxJobs,
+            "list: names every live job");
+        for (int id : ids)
+            run_delegate(parent, pool, json_obj({{"action", jsp(json_str("kill"))}, {"job_id", jsp(json_num(id))}}));
+        // kill is a signal; collect is the reap. Until it runs, the slot is still the children's.
+        for (int id : ids)
+            run_delegate(parent, pool, json_obj({{"action", jsp(json_str("collect"))}, {"job_id", jsp(json_num(id))}}));
+        // after the kills are reaped every slot is free again: a new job starts
+        auto s2 = std::make_shared<Script>();
+        s2->replies = {text_reply("after")};
+        pool.scripts.push_back(s2);
+        const Json again = run_delegate(parent, pool, json_obj({{"goal", jsp(json_str("after the kills"))},
+                                                                {"action", jsp(json_str("start"))}}));
+        const Json* aj = json_get(again, "job_id");
+        chk(aj && aj->type == Json::Num, "depot: a slot is reusable after kill");
+        if (aj) run_delegate(parent, pool, json_obj({{"action", jsp(json_str("collect"))},
+                                                     {"job_id", jsp(json_num(static_cast<int>(aj->num)))}}));
+    }
+
+    // ---- wait: blocks until done, then hands the results over ----
+    {
+        agent::Agent parent;
+        ScriptPool pool;
+        auto s = std::make_shared<Script>();
+        s->replies = {text_reply("waited")};
+        s->delay_ms = 200;
+        pool.scripts.push_back(s);
+        const Json started = run_delegate(parent, pool, json_obj({{"goal", jsp(json_str("quick"))},
+                                                                  {"action", jsp(json_str("start"))}}));
+        const Json* jid = json_get(started, "job_id");
+        const int id = jid ? static_cast<int>(jid->num) : 0;
+        const Json waited = run_delegate(parent, pool, json_obj({{"action", jsp(json_str("wait"))},
+                                                                 {"job_id", jsp(json_num(id))},
+                                                                 {"timeout_ms", jsp(json_num(10000))}}));
+        const Json* rs = json_get(waited, "results");
+        chk(rs && rs->type == Json::Arr && rs->arr.size() == 1, "wait: the child's result is there");
+        const Json* ws = json_get(waited, "state");
+        chk(ws && ws->type == Json::Str && ws->str == "done", "wait: state done");
+    }
+
+    // ---- an unknown job is an error, not a hang ----
+    {
+        agent::Agent parent;
+        ScriptPool pool;
+        const Json out = run_delegate(parent, pool, json_obj({{"action", jsp(json_str("status"))},
+                                                              {"job_id", jsp(json_num(99999))}}));
+        const Json* e = json_get(out, "error");
+        chk(e && e->type == Json::Str && e->str.find("no such delegate job") != std::string::npos,
+            "an unknown job id is refused by name");
     }
 
     std::cout << g_pass << " passed, " << g_fail << " failed\n";
