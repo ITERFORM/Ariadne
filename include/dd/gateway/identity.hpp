@@ -7,7 +7,7 @@
 // knows the same identity as hex(sha256(SPKI)) and makes the gateway sign a nonce
 // with the matching key before it routes anything to it.
 //
-// A fresh home gets an EC P-256 pair; an operator moving off hermes-crypto adopts
+// A fresh home gets an EC P-256 pair; an operator moving off mazemaker-gateway adopts
 // that gateway's cert and key instead, so phones paired against it keep their pin.
 
 #include <filesystem>

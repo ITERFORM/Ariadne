@@ -16,9 +16,9 @@
 //
 // The Mazemaker pairing token. Pairing a phone is Mazemaker's flow: the Architect opens the
 // gateway's loopback-only page (/pair), the app scans the QR. That page hands out one token,
-// as hermes-crypto's gateway.token did -- so it is the one secret kept in clear, in
+// as mazemaker-gateway's gateway.token did -- so it is the one secret kept in clear, in
 // pairing.token beside devices.json (0600), with its device row named "mazemaker pairing".
-// Adopting hermes-crypto makes its gateway.token this token, so phones paired there match.
+// Adopting mazemaker-gateway makes its gateway.token this token, so phones paired there match.
 
 #include <filesystem>
 #include <optional>

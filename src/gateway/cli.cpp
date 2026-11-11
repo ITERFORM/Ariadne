@@ -188,11 +188,11 @@ int adopt(const fs::path& dir, const fs::path& hc) {
     }
     Devices devices(dir / "devices.json");
     auto d = devices.by_token(token);
-    if (!d) d = devices.add("hermes-crypto (adopted)", Devices::default_scopes(), token, error);
+    if (!d) d = devices.add("mazemaker-gateway (adopted)", Devices::default_scopes(), token, error);
     if (!d) { std::cerr << "ariadne: " << error << "\n"; return 1; }
     if (!devices.set_pairing_token(token, error)) { std::cerr << "ariadne: " << error << "\n"; return 1; }
     std::cout << "token adopted as " << d->id << " and as the Mazemaker pairing token: phones paired with\n"
-                 "hermes-crypto keep working, and the /pair page shows the code they were paired with\n";
+                 "mazemaker-gateway keep working, and the /pair page shows the code they were paired with\n";
     return 0;
 }
 

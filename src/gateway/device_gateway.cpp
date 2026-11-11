@@ -186,7 +186,7 @@ Reply DeviceGateway::command(const std::string& body, const std::string& bearer,
 
     const std::string cmd = str_of(core::json_get(inner, "cmd"));
     // Identify the caller before reading the request for anything that is not explicitly
-    // open. `status`/`health` answer anyone (the hermes-crypto compat liveness call), and a
+    // open. `status`/`health` answer anyone (the mazemaker-gateway compat liveness call), and a
     // session handshake authenticates through its proof, so both are answered below.
     // Everything else -- a tool, a session, a read of state -- must not answer a *shape*
     // question to a caller with no device: until this gate a tokenless POST learned "No 'cmd'
@@ -201,7 +201,7 @@ Reply DeviceGateway::command(const std::string& body, const std::string& bearer,
     }
     if (cmd.empty()) return reply(400, jerr("No 'cmd' field"));
 
-    if (cmd == "status" || cmd == "health") {   // open, as on hermes-crypto: liveness for anyone
+    if (cmd == "status" || cmd == "health") {   // open, as on mazemaker-gateway: liveness for anyone
         Json o = core::json_obj();
         core::obj_set(o, "status", core::json_str("ok"));
         core::obj_set(o, "gateway", core::json_str("running"));

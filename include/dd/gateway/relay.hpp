@@ -4,7 +4,7 @@
 //
 // The gateway dials OUT to the relay over one WebSocket (wss://<relay>/gw), proves it
 // owns its fingerprint -- it presents its certificate and signs the relay's nonce with
-// the matching key, the protocol hermes-crypto's relay.py speaks -- and then answers
+// the matching key, the protocol mazemaker-gateway's relay.py speaks -- and then answers
 // every forwarded {corr_id, path:/command, body} through DeviceGateway::command with
 // via_relay set, so a relayed request can never authenticate by bearer token: its
 // session opens with the e2e handshake and the relay carries only sealed blobs.

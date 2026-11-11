@@ -1,6 +1,6 @@
 // tests/device_gateway_test.cpp — the device gateway: its crypto against vectors from an
 // independent implementation (Python's `cryptography`, the same AES-GCM the app's
-// GatewayCrypto and hermes-crypto's CryptoMiddleware use), the identity, the device
+// GatewayCrypto and mazemaker-gateway's CryptoMiddleware use), the identity, the device
 // store, every /command path, and one real TLS round trip through net::Server.
 
 #include "dd/core/json.hpp"
@@ -141,7 +141,7 @@ int main() {
     chk(r.status == 200 && !sid.empty() && key.size() == 32, "v1 handshake: bearer -> session_id + client_key");
     chk(gw.command(R"({"cmd":"session"})", "wrong", false).status == 401, "a wrong bearer gets 401");
     chk(gw.command(R"({"cmd":"pod","args":"{}"})", "", false).status == 401, "a command without token or session gets 401");
-    chk(gw.command(R"({"cmd":"status"})", "", false).status == 200, "status stays open, as on hermes-crypto");
+    chk(gw.command(R"({"cmd":"status"})", "", false).status == 200, "status stays open, as on mazemaker-gateway");
 
     auto st = gw.command(enc_cmd(key, sid, "status", ""), "", false);
     chk(str(open_reply(key, st), "agent") == "ariadne" && str(open_reply(key, st), "device") == "full phone",
@@ -155,7 +155,7 @@ int main() {
     auto llm2 = open_reply(key, gw.command(enc_cmd(key, sid, "llm", R"({"method":"POST","path":"v1/chat/completions","body":{"stream":true}})"), "", false));
     chk(str(llm2, "code") == "llm_down", "a stopped model says so: " + str(llm2, "error"));
     auto unk = open_reply(key, gw.command(enc_cmd(key, sid, "shell", "ls"), "", false));
-    chk(str(unk, "code") == "unknown_command", "shell and the other hermes commands do not exist here");
+    chk(str(unk, "code") == "unknown_command", "shell and the other lan_gateway commands do not exist here");
 
     auto killed = open_reply(key, gw.command(enc_cmd(key, sid, "kill", ""), "", false));
     chk(str(killed, "destroyed") == sid, "kill names the session it destroyed");
@@ -292,7 +292,7 @@ int main() {
         dd::gateway::free_server_ctx(ctx);
     }
 
-    // ---- Mazemaker pairing: /pair and /pair.json, as hermes-crypto served them ----
+    // ---- Mazemaker pairing: /pair and /pair.json, as mazemaker-gateway served them ----
     {
         auto call = [](const DeviceGateway& g, const std::string& path, const std::string& peer) {
             int sv[2];
@@ -330,20 +330,20 @@ int main() {
         const Json* v = dd::core::json_get(doc, "v");
         chk(v && v->type == Json::Num && v->num == 1 && !str(doc, "token").empty() && str(doc, "fp") == id->fp_b64() &&
                 !dd::core::json_get(doc, "host"),
-            "the code is hermes-crypto's: base64({v:1, token, fp}), host-less (the app finds the gateway by mDNS)");
+            "the code is mazemaker-gateway's: base64({v:1, token, fp}), host-less (the app finds the gateway by mDNS)");
         chk(str(parse(body_of(call(g2, "/pair.json", "::1"))), "code") == code, "the code is stable: every scan gets the same token");
         chk(call(g2, "/pair.json", "192.168.0.5").find(" 403 ") != std::string::npos, "a LAN client gets 403: the code carries a token");
         chk(call(g2, "/pair", "192.168.0.5").find(" 403 ") != std::string::npos, "the page too");
         const std::string page = call(g2, "/pair", "127.0.0.1");
         chk(page.find("PAIR YOUR PHONE") != std::string::npos && page.find(code) != std::string::npos, "/pair is the page with the code");
         chk(page.find("<svg") != std::string::npos || page.find("install qrencode") != std::string::npos, "and a QR (or says how to get one)");
-        chk(call(g2, "/", "127.0.0.1").find("PAIR YOUR PHONE") != std::string::npos, "/ is the page too, as on hermes-crypto");
+        chk(call(g2, "/", "127.0.0.1").find("PAIR YOUR PHONE") != std::string::npos, "/ is the page too, as on mazemaker-gateway");
         auto ps = g2.command(R"({"cmd":"session"})", str(doc, "token"), false);
         chk(ps.status == 200 && ps.body.find("client_key") != std::string::npos, "the scanned token opens a session");
 
-        // adoption: hermes-crypto's gateway.token becomes the pairing token
+        // adoption: mazemaker-gateway's gateway.token becomes the pairing token
         dd::gateway::Devices ad(dir / "adopt" / "devices.json");
-        chk(ad.set_pairing_token("legacy-hermes-token", err) && ad.pairing_token(false, err).value_or("") == "legacy-hermes-token",
+        chk(ad.set_pairing_token("legacy-gateway-token", err) && ad.pairing_token(false, err).value_or("") == "legacy-gateway-token",
             "an adopted token is what /pair hands out");
         // revoking the pairing device ends that token; the next /pair mints another
         const auto pdev = pd.by_token(str(doc, "token"));

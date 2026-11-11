@@ -1,6 +1,6 @@
 #pragma once
 // dd/gateway/cli.hpp — the operator's side of the device gateway: pairing, the device
-// list, revocation, adopting a hermes-crypto gateway, and the config it runs on.
+// list, revocation, adopting a mazemaker-gateway gateway, and the config it runs on.
 //
 //   ariadne --pair [--host HOST:PORT]
 //       prints the Mazemaker pairing code (and a QR when qrencode is installed): the
@@ -12,7 +12,7 @@
 //   ariadne --devices
 //   ariadne --revoke ID
 //   ariadne --gateway-adopt DIR
-//       take over a hermes-crypto gateway: DIR's gateway.crt/gateway.key become this
+//       take over a mazemaker-gateway gateway: DIR's gateway.crt/gateway.key become this
 //       gateway's identity (phones keep their pin) and gateway.token becomes a device
 //       (phones keep their token). Nothing to re-pair.
 //
@@ -50,7 +50,7 @@ std::string relay_public_from(const core::Config& cfg);
 int pair(const std::filesystem::path& dir, const core::Config& cfg, const PairOptions& opt);
 int list_devices(const std::filesystem::path& dir);
 int revoke(const std::filesystem::path& dir, const std::string& id);
-int adopt(const std::filesystem::path& dir, const std::filesystem::path& hermes_crypto_home);
+int adopt(const std::filesystem::path& dir, const std::filesystem::path& gateway_home);
 
 // The first private IPv4 of this machine, "" when there is none.
 std::string lan_address();

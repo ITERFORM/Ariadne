@@ -292,7 +292,7 @@ if [ "$(code https://127.0.0.1:$GW_PORT/command -X POST -H 'Content-Type: applic
 else fail "a tokenless /command answered a shape question -- the protocol reads from outside the trust boundary"
 fi
 # The identity-first rule must not close what is deliberately open: /command status is the
-# hermes-crypto liveness call and answers anyone.
+# mazemaker-gateway liveness call and answers anyone.
 if [ "$(code https://127.0.0.1:$GW_PORT/command -X POST -H 'Content-Type: application/json' -d '{"cmd":"status"}')" = 200 ]; then
   note "tokenless /command status stays open ok"
 else fail "the identity-first gate closed the open status command"

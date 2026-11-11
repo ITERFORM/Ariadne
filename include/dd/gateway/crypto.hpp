@@ -1,7 +1,7 @@
 #pragma once
 // dd/gateway/crypto.hpp — the primitives the device gateway stands on, over OpenSSL.
 //
-// The envelope is the one hermes-crypto's CryptoMiddleware and the Mazemaker app's
+// The envelope is the one mazemaker-gateway's CryptoMiddleware and the Mazemaker app's
 // GatewayCrypto already speak: base64(nonce16 | tag16 | ciphertext), AES-256-GCM with
 // a 16-byte nonce and no associated data. Anything that changes it breaks every paired
 // phone, so it is pinned by a known-answer test (tests/device_gateway_test.cpp).

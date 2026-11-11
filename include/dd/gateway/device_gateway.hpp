@@ -2,7 +2,7 @@
 // dd/gateway/device_gateway.hpp — the device gateway: how a paired phone reaches this
 // machine's agent, memory and model, on the LAN (G4) and through a relay (G5).
 //
-// It speaks the wire the Mazemaker app already speaks to hermes-crypto's lan_gateway,
+// It speaks the wire the Mazemaker app already speaks to mazemaker-gateway's lan_gateway,
 // so a phone paired there needs nothing new on the LAN:
 //
 //   POST /command  {"cmd":"session"} + Authorization: Bearer <device token>
@@ -95,7 +95,7 @@ public:
         pair_fp_ = std::move(fp_b64);
         pair_relay_ = std::move(relay_public);
     }
-    // The Mazemaker pairing code, exactly as hermes-crypto's pairing_code() made it.
+    // The Mazemaker pairing code, exactly as mazemaker-gateway's pairing_code() made it.
     static std::string mazemaker_code(const std::string& token, const std::string& fp_b64,
                                       const std::string& relay_public, const std::string& host = "");
 
