@@ -274,7 +274,7 @@ static void usage(FILE* f) {
         "       ariadne [--home DIR] --limbo [HOST:]PORT   run the agent on its own inference engine: the limbo level\n"
         "       ariadne [--home DIR] --gateway [HOST:]PORT     the agent, its memory and model for paired phones (TLS)\n"
         "       ariadne [--home DIR] --pair [--name N] [--scopes LIST] [--host HOST:PORT] | --devices | --revoke ID\n"
-        "       ariadne [--home DIR] --gateway-adopt DIR   take over a hermes-crypto gateway's identity and token\n"
+        "       ariadne [--home DIR] --gateway-adopt DIR   take over a mazemaker-gateway gateway's identity and token\n"
         "       ariadne --init [--from FILE] [--rules]     write config.yaml and the folders beside the binary\n"
         "       ariadne --help | --version\n"
         "\n"
@@ -336,24 +336,24 @@ void leave() {   // async-signal-safe
 // the 2026-11-06 delegate-segv triage its si_addr). Name the fault first.
 void on_fatal(int sig, siginfo_t* si, void*) {
     char buf[96];
-    size_t n = 0;
-    for (const char* h = "fatal signal "; *h && n < sizeof buf; ++h) buf[n++] = *h++;
-    if (sig >= 10) buf[n++] = static_cast<char>('0' + sig / 10);
-    buf[n++] = static_cast<char>('0' + sig % 10);
-    for (const char* h = " code "; *h && n < sizeof buf; ++h) buf[n++] = *h++;
+    size_t n = 0; auto put = [&](char ch) { if (n < sizeof buf - 1) buf[n++] = ch; };   // the last byte stays free for the newline
+    for (const char* h = "fatal signal "; *h; ++h) put(*h);
+    if (sig >= 10) put(static_cast<char>('0' + sig / 10));
+    put(static_cast<char>('0' + sig % 10));
+    for (const char* h = " code "; *h; ++h) put(*h);
     const int c = si ? si->si_code : 0;
-    if (c < 0) { buf[n++] = '-'; }
+    if (c < 0) put('-');
     {   // |si_code| as decimal, worst case three digits
         int v = c < 0 ? -c : c; char d[8]; int k = 0;
         do { d[k++] = static_cast<char>('0' + v % 10); v /= 10; } while (v && k < 8);
-        while (k && n < sizeof buf) buf[n++] = d[--k];
+        while (k) put(d[--k]);
     }
-    for (const char* h = " at 0x"; *h && n < sizeof buf; ++h) buf[n++] = *h++;
+    for (const char* h = " at 0x"; *h; ++h) put(*h);
     const unsigned long long a = static_cast<unsigned long long>(reinterpret_cast<unsigned long long>(si ? si->si_addr : nullptr));
-    for (int sh = 60; sh >= 0 && n < sizeof buf; sh -= 4)
-        buf[n++] = "0123456789abcdef"[(a >> sh) & 0xF];
-    buf[n < sizeof buf ? n : sizeof buf - 1] = '\n';
-    n = n < sizeof buf - 1 ? n + 1 : sizeof buf - 1;
+    for (int sh = 60; sh >= 0; sh -= 4)
+        put("0123456789abcdef"[(a >> sh) & 0xF]);
+    buf[n++] = '\n';   // put() stops one byte short, so this always fits
+    // n <= sizeof buf; the old loops stepped h twice per pass and skipped every other char
     const ssize_t wr = ::write(STDERR_FILENO, buf, n);
     (void) wr;
     leave();

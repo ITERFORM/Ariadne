@@ -8,6 +8,7 @@
 #include <sys/stat.h>
 
 #include <sys/file.h>
+#include <fcntl.h>   // ::open, O_* (glibc pulls it in through other headers; musl does not)
 #include <unistd.h>
 #include <algorithm>
 #include <ctime>
