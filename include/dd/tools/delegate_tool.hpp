@@ -39,7 +39,7 @@ namespace dd {
 namespace agent {
 class Agent;
 class HttpLLM;
-class LLMClient;
+struct LLMClient;
 }  // namespace agent
 
 namespace tools {
