@@ -221,7 +221,11 @@ void Router::submit_deep(const std::string& query) {
 // The thread that asks, whichever leg asked: one place that owns how a recall is sized and how its
 // result is handed to the waiter (the atomic the parked turn sleeps on).
 void Router::launch(const std::shared_ptr<DeepJob>& job) {
-    const size_t chars = std::clamp<size_t>((policy_.max_turn_tokens > ws_.turn_tokens() ? policy_.max_turn_tokens - ws_.turn_tokens() : 0) * 4, 1200, 6000);
+    // The block's room is the deep leg's own (deep_tokens), bounded by what the turn can still take
+    // but never under a floor that fits two whole curated rows: a recall cut to a few lines is a
+    // pointer with extra steps, and the pointer was what nobody read.
+    const size_t left = policy_.max_turn_tokens > ws_.turn_tokens() ? policy_.max_turn_tokens - ws_.turn_tokens() : 0;
+    const size_t chars = std::clamp<size_t>(std::min(policy_.deep_tokens, std::max<size_t>(left, 600)) * 4, 2400, 20000);
     std::thread([job, rec = recaller_, query = job->query, win = last_in_window_, earlier = last_earlier_, chars] {
         job->result = rec.run(query, win, earlier, chars);
         job->done.store(1, std::memory_order_release);
@@ -289,14 +293,28 @@ void Router::run(const Intent& in, Delivery& d, std::vector<std::string>& notes)
                 }
             }
         }
+        // ... and the best memory: one primary-key read, and the model has the note itself in the
+        // same round. The catalogue is local, so this is the one piece of the maze's knowledge that
+        // is in the FIRST call of a turn whatever the pod's latency.
+        if (policy_.auto_open && !shown.memory.empty() && cats_.memory) {
+            const Hit& top = shown.memory.front();
+            if (policy_.memory.opens(top, cats_.memory->size())) {
+                Uri u = top.card.uri;
+                u.page.clear();
+                if (auto body = cats_.memory->open(u)) {
+                    shown.mem_head = std::move(*body);
+                    shown.mem_head_title = top.card.title;
+                }
+            }
+        }
     }
     if (in.reason == "turn" || in.reason.rfind("shift", 0) == 0) ws_.cover(in.query.terms);   // said, or looked and found nothing: the topic is covered
 
     const size_t left = policy_.max_turn_tokens > ws_.turn_tokens() ? policy_.max_turn_tokens - ws_.turn_tokens() : 0;
     std::string text;
     std::vector<Uri> offered;
-    bool head_in = false;
-    if (left > 0) text = deliver_.note(shown, in.reason, std::min(in.tokens, left), left, &offered, &head_in);
+    bool head_in = false, mem_head_in = false;
+    if (left > 0) text = deliver_.note(shown, in.reason, std::min(in.tokens, left), left, &offered, &head_in, &mem_head_in);
     std::string notice;
     if (in.notice) {
         notice = Deliverer::notice(in.reason.rfind("stall: same", 0) == 0 ? "repeated_call" : "blind_exploration", StallTrigger::notice_text(ws_, policy_));
@@ -336,6 +354,14 @@ void Router::run(const Intent& in, Delivery& d, std::vector<std::string>& notes)
             ++stats_.opened_for;
             publish_reattach();
         }
+        if (mem_head_in) {
+            Uri u = shown.memory.front().card.uri;
+            note_demand_open(u);
+            ws_.opened(u, shown.mem_head_title, deliver_.tokens(shown.mem_head->text));
+            d.opened.push_back(u);
+            sink_->emit(ev(Event::Type::OpenedByRouter, u, in.reason));
+            ++stats_.opened_for;
+        }
         if (!shown.skills.empty() && d.skill.empty()) d.skill = shown.skills.front().card.title;
         if (!in.key.empty()) ws_.warn(in.key);
     }
@@ -371,6 +397,9 @@ Delivery Router::on(const Signal& s) {
         signal = "turn";
         ws_.new_turn(t->text);
         ws_.new_epoch(t->epoch);
+        shift_deeps_ = 0;
+        waited_ms_ = 0;
+        answered_again_ = false;
         last_in_window_ = t->in_window;
         last_earlier_ = t->earlier;
         Event e = ev(Event::Type::TurnStart);
@@ -399,6 +428,12 @@ Delivery Router::on(const Signal& s) {
         run(in, d, notes);
         reason += (reason.empty() ? "" : " + ") + in.reason;
         if (in.deep && deep_query.empty()) {
+            // a shift asks the pod only so often, and never while this turn's own recall is still unanswered
+            if (in.reason.rfind("shift", 0) == 0) {
+                if (shift_deeps_ >= policy_.shift_deep_per_turn) continue;
+                if (inflight_ && !inflight_->delivered && !inflight_->done.load(std::memory_order_acquire)) continue;
+                ++shift_deeps_;
+            }
             deep_query = in.query.text;
             wait_ms = std::max(wait_ms, in.wait_ms);
         }
@@ -412,15 +447,7 @@ Delivery Router::on(const Signal& s) {
             submit_deep(deep_query);
             if (wait_ms > 0) wait_ms = std::max(wait_ms, patience_ms());   // patience is what this pod has shown it needs
             const bool mine = inflight_ && inflight_->turn == ws_.turn();   // never a recall an earlier turn asked
-            if (mine && wait_ms > 0) {
-                const auto end = Clock::now() + std::chrono::milliseconds(wait_ms);
-                while (!inflight_->done.load(std::memory_order_acquire) && !(cancelled && cancelled())) {
-                    const auto left = end - Clock::now();
-                    if (left <= std::chrono::nanoseconds(0)) break;
-                    // asleep until the recall lands (woken at once); the slice is how often a cancel is looked for
-                    core::park(inflight_->done, 0, std::min<std::chrono::nanoseconds>(left, std::chrono::milliseconds(20)));
-                }
-            }
+            if (mine && wait_ms > 0) waited_ms_ += wait_for(inflight_, wait_ms);
             if (mine && inflight_->done.load(std::memory_order_acquire) && !inflight_->delivered) {
                 inflight_->delivered = true;
                 d.deep = inflight_->result;
@@ -482,6 +509,46 @@ Delivery Router::on(const Signal& s) {
 // A pod on a tunnel to another machine is slower AT ARRIVAL than one on the same host, and the one
 // number that knows how much slower is the last answer's own clock. Never below the configured
 // patience (which is a floor, not a target), never above the past-question budget.
+// Parked on the job's word until it lands, the deadline passes or the turn is cancelled; the ms it took.
+int Router::wait_for(const std::shared_ptr<DeepJob>& job, int wait_ms) const {
+    const auto t0 = Clock::now();
+    const auto end = t0 + std::chrono::milliseconds(wait_ms);
+    while (!job->done.load(std::memory_order_acquire) && !(cancelled && cancelled())) {
+        const auto left = end - Clock::now();
+        if (left <= std::chrono::nanoseconds(0)) break;
+        // asleep until the recall lands (woken at once); the slice is how often a cancel is looked for
+        core::park(job->done, 0, std::min<std::chrono::nanoseconds>(left, std::chrono::milliseconds(20)));
+    }
+    return static_cast<int>(ms_since(t0));
+}
+
+bool Router::deep_pending() const {
+    return inflight_ && inflight_->turn == ws_.turn() && !inflight_->delivered;
+}
+
+// The memory is owed to this turn, not to the next one. A turn that ends without a tool call never
+// reaches the round where a late answer would be handed over, so the engine asks here before the
+// model's draft becomes the answer: wait out the rest of the past-question budget (what the turn
+// start already waited counts), then deliver what landed. Once per turn; nothing for a turn whose
+// recall was delivered, found nothing, or was never asked.
+std::optional<Delivery> Router::await_deep() {
+    if (!policy_.deep_required || answered_again_) return std::nullopt;
+    if (!deep_pending()) {   // nothing in flight for this turn: an answer may still be lying ready
+        auto d = late();
+        if (d) answered_again_ = true;
+        return d;
+    }
+    const int left = std::max(0, policy_.deep_recall_ms - waited_ms_);
+    if (left > 0 && !inflight_->done.load(std::memory_order_acquire)) waited_ms_ += wait_for(inflight_, left);
+    if (!inflight_->done.load(std::memory_order_acquire)) return std::nullopt;   // still not here: it rides the next turn
+    auto d = late();
+    if (d) {
+        answered_again_ = true;
+        ++stats_.deep_held;
+    }
+    return d;
+}
+
 int Router::patience_ms() const {
     if (deep_last_ms_ <= 0) return 0;
     const long need = static_cast<long>(deep_last_ms_) + static_cast<long>(deep_last_ms_) / 4;

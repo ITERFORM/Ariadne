@@ -60,6 +60,10 @@ public:
     // ---- the agent loop ----
     Delivery on(const Signal& s);
     std::optional<Delivery> late();                 // a deep answer that missed its deadline and has landed since
+    // Before a draft becomes the turn's answer: the recall this turn is still owed, waited for (the rest of
+    // deep_recall_ms) and delivered; nullopt when nothing is owed, nothing came, or it was done once already.
+    std::optional<Delivery> await_deep();
+    bool deep_pending() const;                      // this turn's recall was asked and has not been delivered
     void set_ratio(Deliverer::Ratio r) { deliver_ = Deliverer(std::move(r)); }
     void end_turn();                                // the turn is over: learning closes its exposures
     // Ask the pod BETWEEN turns, about what this session is actually working on. A recall costs
@@ -98,6 +102,7 @@ public:
         // next one), one that found nothing (spent, said nothing), one the carry would not hold.
         std::atomic<uint64_t> deep_carried{0}, deep_empty{0}, deep_dropped{0};
         std::atomic<uint64_t> deep_proactive{0}, deep_adopted{0};   // asked between turns, and the ones a question took over
+        std::atomic<uint64_t> deep_held{0};   // answers held back until the recall landed (await_deep said something)
         std::atomic<uint64_t> refused{0};   // candidate slots the demand guard declined, over the process
         std::atomic<uint64_t> opened_lost{0};   // opens the ring refused: counted, named, never a silent drop
     };
@@ -135,6 +140,9 @@ private:
     core::SlotRing<64, Opened> opened_q_;
     std::shared_ptr<DeepJob> inflight_;   // the newest: the one this turn may wait on
     int deep_last_ms_ = 0;   // what THIS pod has been taking lately (smoothed): the deadline's own measurement
+    int waited_ms_ = 0;      // what this turn has already waited on its recall (the turn start, then await_deep)
+    int shift_deeps_ = 0;    // recalls a shift asked for this turn
+    bool answered_again_ = false;   // await_deep delivered once this turn
     std::string last_prefetch_;   // the last guess: asking the same thing twice buys nothing
     // Earlier turns' recalls that no one has delivered yet. The pod can be on another machine --
     // the operator's is behind a tunnel on a second box, where 6-20 s is ordinary -- so most
@@ -162,6 +170,7 @@ private:
     void launch(const std::shared_ptr<DeepJob>& job);   // the thread that asks: shared by the turn's leg and the prefetch
     std::optional<Delivery> take_carry();   // a carried answer, when one is ready and there is budget
     int patience_ms() const;                // how long a waiting turn gives the pod, from its own recent answers
+    int wait_for(const std::shared_ptr<DeepJob>& job, int wait_ms) const;   // parked until it lands or the deadline; the ms spent
     void note_latency(long ms);             // the pod's measurement, folded in
     void log(const char* signal, const Delivery& d, const std::string& reason, const char* deep) const;
     bool seen(const Uri& u, Placement where) const;

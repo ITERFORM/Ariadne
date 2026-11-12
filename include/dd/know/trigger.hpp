@@ -6,7 +6,7 @@
 // is a unit test. The router runs the plan.
 //
 //   TurnStartTrigger  a question arrived: skills, memory and tools by what was asked, plus the pod's recall
-//   ShiftTrigger      after a tool batch the task moved: terms the turn has not covered (two or more)
+//   ShiftTrigger      after a tool batch the task moved: terms the turn has not covered (two or more); the pod too, no wait
 //   FailureTrigger    a call failed: what the maze knows about that error
 //   StallTrigger      the same call twice, or three looks around that found nothing: poking blind
 

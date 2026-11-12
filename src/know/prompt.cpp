@@ -25,7 +25,12 @@ std::string PromptComposer::retrieval_contract(const Contract& c) {
         "## Retrieval\n"
         "The harness looks things up for you and attaches <retrieval> notes: pointers" +
         std::string(c.skills && c.memory ? " to skills and memories" : c.skills ? " to skills" : c.memory ? " to memories" : "") +
-        ", never answers. A note after a tool result means the task shifted or a call failed.\n";
+        ", and the text of the one it is sure of, opened for you (<skill>, <memory>). "
+        "A note after a tool result means the task shifted, a call failed, or the memory answered late.\n";
+    if (c.memory)
+        s += "- <memory-context> is the maze's answer to the question, in layers (knowledge written on purpose, skills, "
+             "how it was reasoned through before, earlier sessions, facts): the harness's own past. Build on it before the "
+             "first tool call; a cut row continues with read_file(\"mem://id\"). Arrives after your draft: answer again.\n";
     if (c.skills || c.memory) {
         s += "- A pointer that fits the task MUST be opened before you act on it:";
         if (c.skills) s += " read_file(\"skill://name\")";

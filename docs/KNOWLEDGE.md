@@ -363,25 +363,31 @@ classDiagram
 | Signal | Fires when | What | How | Where / budget | Guard |
 |---|---|---|---|---|---|
 | Session start | process start / `/new` | pins (`user:`+`feedback:`, flagged `invariant:`: <= 800 tokens), catalogue map (<= 250) | one `get` batch, 3 s deadline, cached copy in `<home>/cache` if the pod is down | system prefix (stable, KV-cached) | built once per launch |
-| Turn start | every non-trivial turn | skills + curated memory + tools | local lexical sync (< 5 ms); deep pod recall async, deadline = `knowledge.deep_ms` or what this pod has shown it needs (+25%); a late answer rides a later round or the next turn, marked as its question's answer. A prefetch still running from the last turn is adopted, never duplicated | question note <= 600 tokens | skip `trivial_prompt`; ladder by confidence |
+| Turn start | every non-trivial turn | skills + curated memory + tools; the pod's recall in layers (knowledge whole, skills, reasoning chains, earlier sessions, graph neighbours, facts) | local lexical sync (< 5 ms), a confident skill's or memory's head opened; deep pod recall async: ONE wide recall (24 rows, whole bodies) cut into layers by label here, deadline = `knowledge.deep_ms` or what this pod has shown it needs (+25%); a late answer rides a later round, the hold before the final answer, or the next turn, marked as its question's answer. A prefetch still running from the last turn is adopted, never duplicated | question note <= 900 tokens; the pod's block <= 2,500 of its own | skip `trivial_prompt`; ladder by confidence; rows under similarity 0.25 dropped |
+| Before the final answer | the model answered without a tool call while this turn's recall is still in flight (`knowledge.deep_required`) | the pod's answer | the rest of `deep_recall_ms` is waited out; what landed is appended under the draft and the model is asked once more | charged to the turn | once per turn; never on an interrupt or the last iteration |
 | Turn end (**prefetch**) | after a turn that was not interrupted | big chance: `knowledge.proactive` | the pod is asked about the open ledger + the question just answered, so its 6-24 s is spent before the next question exists; the answer is background unless a real question adopts it | charged to the turn that receives it | skipped when the pod is down, already answering, or already asked the same thing |
-| After a tool batch (**shift**) | >= 2 new content terms (tool args, `intent`, path project/extension, binaries) not covered by this epoch's offers | skills, `invariant:` / `rule:` cards | local only | after-tools note <= 250 | not within 2 rounds of the last note; cards once per epoch |
-| Failure | exit != 0 / error head, and (second failure of that tool family this turn, or the error signature matches a card) | `bug:` `invariant:` `ops:` cards, debugging skills | local, plus deep async | after-tools <= 300 | one per signature |
-| Stall | identical call x2, or 3 blind explorations (`list_dir`/`read_file` misses, `ls`/`find`/`grep` with nothing new) | redirect notice + retrieval on the *question* | local + deep | after-tools <= 350 | once per turn |
+| After a tool batch (**shift**) | >= 2 new content terms (tool args, `intent`, path project/extension, binaries) not covered by this epoch's offers | skills, `invariant:` / `rule:` cards; the pod on the shift's words anchored on the question | local, plus deep async with no wait (`knowledge.mid_turn.shift_deep`) | after-tools note <= 300 | not within 2 rounds of the last note; cards once per epoch; <= `shift_deep_per_turn` pod asks per turn, never while the turn's own recall is unanswered |
+| Failure | exit != 0 / error head, and (second failure of that tool family this turn, or the error signature matches a card) | `bug:` `invariant:` `ops:` cards, debugging skills | local, plus deep async | after-tools <= 360 | one per signature |
+| Stall | identical call x2, or 3 blind explorations (`list_dir`/`read_file` misses, `ls`/`find`/`grep` with nothing new) | redirect notice + retrieval on the *question* | local + deep | after-tools <= 420 | once per turn |
 | Rebase | epoch start | active skills as pointers (+ head for the one in use), pins unchanged | `WorkingSet::reattach` | anchor | tokens counted with the measured ratio |
 | Model asks | `find`, `read skill://`, `mazemaker_*` | whatever it asks | always served | tool result | recorded as *opened* |
 | Tripwire | a rule pattern matches a tool call's arguments | the rule text | `Tripwires::check` before execution | the vetoed call's result | `once` / `after-gap` |
 | Idle | between turns | refresh catalogues (generation), warm caches | background | none | never while a turn runs |
 
-**Budgets.** Turn-start note <= 600 tokens, whole turn <= 1,500 (2.7% of the 54.6k mark), <= 2 opened
-bodies, <= 6k tokens of bodies. A skill opens head-first (<= 1.2k tokens plus a section list);
+**Budgets.** Turn-start note <= 900 tokens, the pod's block <= 2,500 of its own (`knowledge.budget.deep_tokens`),
+whole turn <= 4,000 (7.3% of the 54.6k mark), <= 2 opened bodies, <= 6k tokens of bodies. The numbers moved on
+2026-11-12 because the smaller ones bought nothing: the deep block was cut to 300-1,500 tokens of 420-character
+snippets and the memory pointers beside it were opened 0 times in 872 offers. A skill opens head-first (<= 1.2k tokens plus a section list);
 `#2`, `#3` page the rest. Strata prefills at ~500 tok/s, so 300 tokens of note cost 0.6 s: every
 note has to earn it.
 
 **Offer ladder** (calibrated thresholds, section 7): below `offer` nothing; `offer..open` a pointer
 line with `read_file("skill://x")`; at or above `open` and `body_bytes <= auto_max` the head is
 opened for the model in the same note. The ladder exists because the model will not follow pointers
-reliably; `opened/offered` tells us when to move the thresholds.
+reliably; `opened/offered` tells us when to move the thresholds. A curated memory has the same ladder at
+`memory_open_score` (0.45): at or above it the row itself is opened as `<memory id= label=>`, because a
+memory pointer was never followed at all (872 offered, 0 opened in the live log of 2026-11-09) and the
+text is one primary-key read away, in the first call of the turn whatever the pod's latency.
 
 **Demand guard** (`knowledge.refusal.*`). A card whose fold says *offered often, opened almost never*
 (`offered >= offers` decayed, `conversion_lcb < floor`) stops taking slots: it is offered once every
@@ -399,7 +405,28 @@ What the model sees:
 skill  podman-deep-dive 0.71 - rootless podman / quadlet debugging   -> read_file("skill://podman-deep-dive")
 skill  never-touch-live-pods-or-postgres 0.64 - rule                 -> read_file("skill://never-touch-live-pods-or-postgres")
 memory #1290233 invariant:podman-symlinks - ...                      -> read_file("mem://1290233")
+memory opened for you — #1290233 [invariant:podman-symlinks], page 1/1 (the harness's own note on this; may be older than the files):
+<memory id="1290233" label="invariant:podman-symlinks" page="1/1">
+Never replace a podman quadlet symlink with a copy: the units are linked from the repo. ...
+</memory>
 </retrieval>
+
+<memory-context>
+[System note: The following is recalled memory context, NOT new user input. ...]
+Knowledge (written down on purpose; read it as the harness's own notes):
+- #1416298 [decision:mazemaker-is-the-session-ledger]
+  Operator decision, 2026-11-11: "Mazemaker IS the session". ... (whole row)
+Skills the maze holds for this (the head; read_file("mem://id") for the rest):
+- #1186945 [skill:local:podman-quadlet-ops] Skill: podman-quadlet-ops ...
+How this was reasoned through before:
+- #1416609 [auto:reasoning:dd-6af41c6d-1c29:6af41d16] session:dd-6af41c6d-1c29 @ ... === REASONING === ...
+Earlier sessions on this (what was said and done):
+- #1416608 [auto:turn:dd-6af41c6d-1c29:6af41d16] ...
+Connected in the graph:
+- #1412697 [fact:ariadne-retrieval-conversion-2026-11-09] ...
+Extracted facts:
+- #1418390 [afe:auto:…] ...
+</memory-context>
 
 <retrieval why="shift: quadlet, systemctl">skill://podman-quadlet-ops 0.68 - read it before the next edit.</retrieval>
 
@@ -461,7 +488,7 @@ protocol steps that contradict the harness, and `session_search`, go).
 Contract (RFC 2119 style as in omp, ~110 words):
 
 ```
-Retrieval. The harness attaches <retrieval> notes: pointers (skills, memories, rules), never answers.
+Retrieval. The harness attaches <retrieval> notes: pointers (skills, memories, rules) and the text of the one it is sure of, opened for you (<skill>, <memory>); <memory-context> is the maze's answer for the question, in layers.
 - A pointer that matches the task MUST be opened before you act on it: read_file("skill://name"), read_file("mem://id").
 - NEVER guess a path, a command or a skill name. Unknown -> find(query) first.
 - A <retrieval> note after a tool result means the task shifted or a call failed: read it before the next call.
@@ -624,6 +651,29 @@ to the missing half; its cost is the pod's 6-17 s, so it stays asynchronous.
   on a pod that answers one at a time; a guess that lands with nobody to hand it to rides the next turn's note, prefixed
   "[Recalled between turns …]". Asking the same guess twice is refused (`last_prefetch_`), and so is asking while the pod is
   still answering something — a prefetch is an optimisation and never queues behind itself.
+- **The deep leg is layered and whole (2026-11-12).** `Recaller::run` asks the pod ONE wide recall (24 rows, bodies up to
+  `memory.recall_chars` = 2,400) and cuts the answer into layers by label itself — knowledge (`decision: bug: invariant: ops:
+  fact: status: signal: user: feedback: reference:`), skills (`skill:*`), reasoning chains (`auto:reasoning:*`), episodes
+  (`auto:turn:* session:*` and the rest), facts (`afe*`) — then walks the graph out from the top two knowledge rows (four
+  neighbours, read back by id), takes their extracted facts, and for a temporal question this session's own turns. The top two
+  knowledge rows and the first skill are rendered WHOLE (paragraphs kept, a cut row says `read_file("mem://id") has the rest`);
+  the other layers are snippets; rows under similarity 0.25 and `ariadne:plan:*` revisions are dropped. The block has its own
+  budget (`knowledge.budget.deep_tokens`, 2,500). Measured through the tunnel on 2026-11-12: a recall of 6 rows at 600 chars
+  took 4.0 s, 24 rows with whole bodies 4.4 s (57 KB), so the width is free; `mazemaker_recall_multi` with three angles took
+  29.7 s (the angles are serialised on the pod), so multi-angle stays out of the turn; and the pod's `scope` filter leaks
+  (`scope=curated` answered with an `auto:turn:` row at rank 1), which is why the partition is done here and not there.
+- **A confident memory is opened, not pointed at.** `Policy::memory.open_score` 2.0 → 0.45 (`memory_open_score`): the top
+  curated card over the bar is read by id and fenced as `<memory id= label= page=>` in the turn note, like a skill's head; it
+  counts as opened for the demand guard and the working set, and is not opened twice in an epoch.
+- **The memory is owed to the turn (`knowledge.deep_required`, default on).** 59% of turn-start recalls arrived after their
+  deadline in the live log (348 of 594) and a turn that answers without a tool call never reaches the round a late answer is
+  delivered in. `ContextEngine::before_final` is asked once before a draft becomes the answer: `Router::await_deep` waits out
+  the rest of `deep_recall_ms` (what the turn start waited counts), delivers what landed under the draft with a note to answer
+  again, and the loop makes one more call. A pod slower than the budget does not hold the answer past it; its answer still rides
+  the next round. Never on an interrupt, never on the last iteration.
+- **A shift asks the pod too (`knowledge.mid_turn.shift_deep`).** The shift's new terms, anchored on the question, go to the
+  deep leg with no wait; at most `shift_deep_per_turn` (2) per turn and never while the turn's own recall is still unanswered,
+  so a pod that answers one at a time is not queued behind a guess.
 - Rules are one regex on the arguments of a call, checked before it runs (no stream abort); `scope: tool:<name>` narrows it.
 - The contract of 5.3 as built: `open(const Uri&)` (the page rides in the Uri), `refresh()` is blocking and the owner
   (`Refresher`) picks the thread, and `cancel(bool)` was added so `Refresher::stop()` can ask a sync in progress to stop.

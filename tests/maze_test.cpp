@@ -10,6 +10,8 @@
 #include "dd/context/maze.hpp"
 #include "dd/context/recall.hpp"
 #include "dd/core/json.hpp"
+#include "dd/know/router.hpp"
+#include "dd/know/skills.hpp"
 #include "dd/core/slot_ring.hpp"
 #include "dd/tools/mcp.hpp"
 #include "dd/tools/registry.hpp"
@@ -47,6 +49,7 @@ struct FakeGraph : Memory {
     std::map<long, std::vector<Hit>> activations;   // think()
     std::map<long, std::vector<Hit>> extracted;     // facts()
     std::string intent_of = "general";
+    std::atomic<int> recall_ms{0};   // a pod on a tunnel
     std::atomic<long> next_id{9000};
     // The hand-offs a real Soaker makes: rings, slots reused, no node per call. Sizes bound the
     // test's own traffic; a refusal would be a test bug, so the checks assert refused() == 0.
@@ -59,6 +62,7 @@ struct FakeGraph : Memory {
     bool probe() override { return true; }
     std::vector<Hit> recall(const std::string&, int, const std::string&) override {
         ++recalls;
+        if (recall_ms.load() > 0) std::this_thread::sleep_for(std::chrono::milliseconds(recall_ms.load()));
         return recall_hits;
     }
     long remember(const std::string& label, const std::string& content) override {
@@ -310,29 +314,50 @@ int main() {
         chk(chained, "a resumed chain continues from its last turn");
     }
 
-    // ---- the recaller: one recall, the graph around it, nothing twice ----
+    // ---- the recaller: one wide recall cut into layers, whole rows on top, the graph around it, nothing twice ----
     {
         auto g = std::make_shared<FakeGraph>();
-        g->recall_hits = {Hit{1, "decision:tape", "the tape renders once", 0.7},
+        g->recall_hits = {Hit{1, "decision:tape", "the tape renders once.\n\nThen it is append-only.", 0.7},
                           Hit{2, "auto:turn:dd-x:1", "this turn is on the tape", 0.6},
-                          Hit{3, "fact:kv", "llama reuses only a prefix", 0.5}};
+                          Hit{3, "fact:kv", "llama reuses only a prefix", 0.5},
+                          Hit{4, "skill:local:tape-ops", "Skill: tape-ops\nHow to rebase the tape by hand", 0.55},
+                          Hit{5, "auto:reasoning:dd-y:1", "session:dd-y\n\n=== REASONING ===\nthe prefix breaks when the system prompt moves", 0.5},
+                          Hit{6, "auto:turn:dd-y:2", "session:dd-y\n\n=== USER ===\nkv prefix question from another day", 0.45},
+                          Hit{7, "afe:auto:1", "the prefix cache is per slot", 0.4},
+                          Hit{8, "fact:noise", "a row the embedding barely matched", 0.1},
+                          Hit{9, "ariadne:plan:dd-y:000001", "- [ ] 1. a plan revision", 0.6}};
+        g->recall_hits[0].chars = 5000;   // the pod cut this row: the block says where the rest is
         g->rows[10] = Hit{10, "invariant:prefix", "hygiene only at a rebase", 0};
         g->rows[11] = Hit{11, "skill:local:x", "a skill row", 0};
+        g->rows[12] = Hit{12, "derived:cluster:abc", "\", \"similarity\": 0.8454, \"connections\": [", 0};
         g->rows[20] = Hit{20, "auto:turn:dd-x:0", "session:dd-x\n\n=== USER ===\nearlier question", 0};
-        g->activations[1] = {Hit{2, "auto:turn:dd-x:1", "", 0.4}, Hit{11, "skill:local:x", "", 0.3}, Hit{10, "invariant:prefix", "", 0.2}};
+        g->activations[1] = {Hit{2, "auto:turn:dd-x:1", "", 0.4}, Hit{11, "skill:local:x", "", 0.3}, Hit{12, "derived:cluster:abc", "", 0.25},
+                             Hit{10, "invariant:prefix", "", 0.2}};
         g->extracted[1] = {Hit{30, "afe", "tape freezes bytes", 0.9}};
         Recaller r(g);
         const Prefetch p = r.run("why does the context tape break the KV prefix", {2}, {20});
-        chk(p.dropped == 1 && p.hits == 2, "a hit already in the window is dropped");
+        chk(p.dropped == 2, "a hit already in the window is dropped, and so is one under the similarity floor");
+        chk(p.knowledge == 2 && p.skills == 1 && p.chains == 1 && p.episodes == 1 && p.hits == 5, "the recall is cut into layers by label");
+        chk(p.block.find("Knowledge (written down on purpose") != std::string::npos && p.block.find("Skills the maze holds") != std::string::npos &&
+                p.block.find("How this was reasoned through before") != std::string::npos && p.block.find("Earlier sessions on this") != std::string::npos,
+            "each layer is headed for what it is");
+        chk(p.block.find("- #1 [decision:tape]\n  the tape renders once.\n  \n  Then it is append-only.") != std::string::npos,
+            "the top knowledge rows are rendered whole, paragraphs kept: " + p.block.substr(0, 400));
+        chk(p.block.find("(cut: read_file(\"mem://1\") has the rest)") != std::string::npos, "a row the pod cut says where the rest is");
+        chk(p.block.find("a plan revision") == std::string::npos, "a ledger revision is not quoted back");
+        chk(p.block.find("barely matched") == std::string::npos, "a row under the floor is not in the block");
         chk(p.linked == 1 && p.block.find("hygiene only at a rebase") != std::string::npos, "the graph adds a neighbour by id");
         chk(p.block.find("skill:local:x") == std::string::npos, "skill rows are not neighbours");
-        chk(p.facts == 1 && p.block.find("tape freezes bytes") != std::string::npos, "facts of the top hit");
+        chk(p.block.find("derived:cluster") == std::string::npos, "a dream's cluster node is bookkeeping, not a neighbour to read");
+        chk(p.facts == 2 && p.block.find("tape freezes bytes") != std::string::npos && p.block.find("per slot") != std::string::npos,
+            "facts of the top rows, and the pod's own fact rows");
         chk(p.earlier == 0, "earlier turns only for a temporal question");
         chk(g->recalls.load() == 1, "one recall per turn");
         chk(p.block.find("- #1 [decision:tape]") != std::string::npos && p.block.find("#10 [invariant:prefix]") != std::string::npos,
             "every row names its id for mazemaker_get");
-        chk(p.shown.size() == 4 && p.shown[0].first == 'r' && p.shown[0].second.id == 1 && p.shown[2].first == 'l' && p.shown[3].first == 'f',
-            "the card gets the rows the block carries");
+        std::string kinds;
+        for (const auto& [k, h] : p.shown) kinds.push_back(k);
+        chk(kinds == "rrscplff" && p.shown[0].second.id == 1, "the card gets the rows the block carries, layer by layer: " + kinds);
         g->intent_of = "temporal";
         const Prefetch t = r.run("what did we do earlier", {2}, {20});
         chk(t.earlier == 1 && t.block.find("earlier question") != std::string::npos, "temporal: this session's turns by id");
@@ -377,6 +402,50 @@ int main() {
             "the rebase anchor names the turns by id");
     }
 
+
+    // ---- the engine holds a draft for the recall it is owed, once, and only while something is in flight ----
+    {
+        auto g = std::make_shared<FakeGraph>();
+        g->recall_hits = {Hit{40, "decision:prefix", "the prefix is frozen per epoch, never edited", 0.8}};
+        g->recall_ms = 220;
+        tools::ToolRegistry reg;
+        ToolDeck deck(reg, tools::ToolSearchConfig::from_raw(core::Json{}));
+        deck.arrange({});
+        Endpoint ep("http://203.0.113.1/v1");
+        agent::HttpLLM llm;
+        EngineConfig cfg;
+        cfg.fast_layer_tokens = 100000;
+        cfg.prewarm = false;
+        know::Policy pol;
+        pol.deep_ms = 40;
+        pol.deep_recall_ms = 600;
+        auto skills = std::make_shared<know::SkillCatalogue>(std::vector<std::shared_ptr<know::SkillSource>>{});
+        know::Router router(know::Router::Catalogues{skills, nullptr, nullptr}, pol, g);
+        Soaker soaker(g, "");
+        TapeEngine eng(cfg, "sys", ep, g, &soaker, deck, llm, tmp_dir("hold"), &router);
+        eng.begin_turn("why is the system prompt never edited inside an epoch");
+        chk(router.deep_pending(), "hold: the turn start could not wait the pod out");
+        core::Message draft;
+        draft.role = "assistant";
+        draft.content = "Because it would break the prefix, I think.";
+        draft.finish_reason = "stop";
+        eng.on_assistant(draft);
+        chk(eng.before_final(draft), "hold: the draft is held until the recall lands");
+        bool recalled = false, asked_again = false;
+        for (const auto& m : eng.payload()) {
+            recalled = recalled || m.content.find("frozen per epoch") != std::string::npos;
+            asked_again = asked_again || m.content.find("answer again") != std::string::npos;
+        }
+        chk(recalled && asked_again, "hold: the recall and the ask are on the tape, under the draft");
+        chk(!eng.before_final(draft), "hold: once per turn");
+        eng.end_turn("Because the prefix is frozen per epoch.", false);
+        // in time: nothing to hold
+        g->recall_ms = 0;
+        eng.begin_turn("and why is the tools array never changed either, inside an epoch");
+        chk(!router.deep_pending() && !eng.before_final(draft), "hold: a recall that was in the note holds nothing");
+        eng.end_turn("Same reason.", false);
+        std::this_thread::sleep_for(std::chrono::milliseconds(300));   // a prefetch may be in flight against g
+    }
 
     // ---- the spool: private, replayed from the front, one writer at a time ----
     {

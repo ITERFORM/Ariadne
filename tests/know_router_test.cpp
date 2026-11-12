@@ -267,8 +267,13 @@ static void test_triggers() {
     c1.binaries = {"systemctl", "podman"};
     c1.paths = {"/home/dev/projects/mazemaker/quadlet/db.container"};
     cf.calls = {c1};
+    s.policy.shift_deep = false;
     p = s.plan(cf);
     chk(!p.empty() && p.back().reason.rfind("shift: ", 0) == 0 && p.back().where == Placement::AfterTools && !p.back().deep, "shift: new terms after a batch: a local lookup after the tools");
+    s.policy.shift_deep = true;   // the default: the pod too, without a wait, the question as the anchor
+    p = s.plan(cf);
+    chk(!p.empty() && p.back().deep && p.back().wait_ms == 0 && has(p.back().query.text, "while working on: fix the tui"),
+        "shift: by default the pod is asked too, no wait, anchored on the question");
     s.ws.cover(p.back().query.terms);
     s.ws.new_round();
     p = s.plan(cf);
@@ -471,7 +476,8 @@ struct Stack {
     std::vector<std::string> logs;
 };
 
-static std::unique_ptr<Stack> make_stack(const fs::path& tmp, const std::string& name, Policy p = {}) {
+// open_memory: the memory open bar at a test size (the default 0.45 is fitted to the live catalogue)
+static std::unique_ptr<Stack> make_stack(const fs::path& tmp, const std::string& name, Policy p = {}, bool open_memory = false) {
     auto s = std::make_unique<Stack>();
     s->root = tmp / name;
     const fs::path sk = s->root / "skills";
@@ -492,7 +498,7 @@ static std::unique_ptr<Stack> make_stack(const fs::path& tmp, const std::string&
     s->memory->refresh();
     // small test catalogues: the calibrated thresholds are for 568 skills; the rule's shape is what is under test
     p.skills = Confidence{2, 2.0, 0.15, 0.30, 0};
-    p.memory = Confidence{2, 2.0, 0.15, 2.0, 0};
+    p.memory = Confidence{2, 2.0, 0.15, open_memory ? 0.20 : 2.0, 0};
     p.deep_ms = 60;
     p.deep_recall_ms = 400;
     s->router = std::make_unique<Router>(Router::Catalogues{s->skills, s->memory, nullptr}, p, s->pod);
@@ -694,6 +700,78 @@ static void test_router_open_head(const fs::path& tmp) {
     big.open_max_bytes = 100;
     auto s3 = make_stack(tmp, "head3", big);
     chk(s3->router->on(turn("the podman symlink container mess needs to stop")).opened.empty(), "router: a skill past open_max_bytes is only pointed to");
+}
+
+// A confident memory is read to the model, not pointed at: 872 pointers, 0 opens in the live log.
+static void test_router_memory_head(const fs::path& tmp) {
+    auto s = make_stack(tmp, "memhead", Policy{}, true);
+    auto d = s->router->on(turn("restart the podman quadlet units, the symlink mess is back"));
+    bool mem_opened = false;
+    for (const auto& u : d.opened) mem_opened = mem_opened || u.kind == Kind::Memory;
+    chk(mem_opened, "memory head: a confident curated row is opened for the model");
+    chk(has(d.note, "<memory id=\"") && has(d.note, "label=\"invariant:podman-symlinks\"") && has(d.note, "Never replace a podman quadlet symlink"),
+        "memory head: its text is in the note, fenced as a memory: " + d.note.substr(0, 300));
+    chk(!has(d.note, "invariant:podman-symlinks]") || !has(d.note, "read_file(\"mem://500\")   "), "memory head: not also a pointer line");
+    auto d2 = s->router->on(turn("and the podman quadlet symlink mess again"));
+    chk(!has(d2.note, "<memory id=\""), "memory head: a memory already in the window is not opened twice");
+    auto s2 = make_stack(tmp, "memhead2");   // the bar out of reach: a pointer, as before
+    auto e = s2->router->on(turn("restart the podman quadlet units, the symlink mess is back"));
+    chk(!has(e.note, "<memory id=\"") && has(e.note, "invariant:podman-symlinks"), "memory head: under the open bar the row is a pointer");
+}
+
+// The memory is owed to the turn: before a draft becomes the answer, the recall still in flight is waited for.
+static void test_router_await(const fs::path& tmp) {
+    context::Hit h;
+    h.id = 900;
+    h.label = "decision:something";
+    h.content = "an earlier decision about quadlet generators that matters here a lot";
+    h.score = 0.7;
+    {
+        auto s = make_stack(tmp, "await1");
+        s->pod->recall_hits = {h};
+        s->pod->recall_ms = 250;   // past deep_ms (60), inside deep_recall_ms (400)
+        auto d = s->router->on(turn("restart the quadlet generator please"));
+        chk(d.deep_late && s->router->deep_pending(), "await: the turn start could not wait it out: owed");
+        const auto t0 = std::chrono::steady_clock::now();
+        const auto held = s->router->await_deep();
+        const double waited = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+        chk(held && has(held->note, "an earlier decision about quadlet generators"), "await: the draft is held until the recall lands, and gets it");
+        chk(waited < 350, "await: it waited for the answer, not for the whole budget (" + std::to_string(static_cast<int>(waited)) + " ms)");
+        chk(!s->router->deep_pending() && !s->router->await_deep(), "await: once per turn");
+        chk(s->router->stats().deep_held.load() == 1, "await: counted");
+    }
+    {   // slower than the whole budget: the draft stands, the answer is not lost
+        auto s = make_stack(tmp, "await2");
+        s->pod->recall_hits = {h};
+        s->pod->recall_ms = 700;
+        s->router->on(turn("restart the quadlet generator please"));
+        const auto t0 = std::chrono::steady_clock::now();
+        const auto held = s->router->await_deep();
+        const double waited = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+        chk(!held && waited < 450, "await: a pod slower than deep_recall_ms does not hold the answer past it (" + std::to_string(static_cast<int>(waited)) + " ms)");
+        std::this_thread::sleep_for(std::chrono::milliseconds(400));
+        const auto late = s->router->late();
+        chk(late && has(late->note, "an earlier decision"), "await: ... and the answer still arrives with the next round");
+    }
+    {   // off: the draft is never held
+        Policy p;
+        p.deep_required = false;
+        auto s = make_stack(tmp, "await3", p);
+        s->pod->recall_hits = {h};
+        s->pod->recall_ms = 200;
+        s->router->on(turn("restart the quadlet generator please"));
+        const auto t0 = std::chrono::steady_clock::now();
+        chk(!s->router->await_deep() && std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count() < 50,
+            "await: knowledge.deep_required: false never waits");
+        std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    }
+    {   // the answer landed in time: nothing is owed, nothing is held
+        auto s = make_stack(tmp, "await4");
+        s->pod->recall_hits = {h};
+        s->pod->recall_ms = 0;
+        auto d = s->router->on(turn("restart the quadlet generator please"));
+        chk(!d.deep_late && !s->router->await_deep(), "await: a recall that was in the note is not delivered twice");
+    }
 }
 
 // A demand stand-in: the fold says this card was offered often and opened never. FixedOverlay lives further down
@@ -1174,7 +1252,7 @@ static void test_prompt() {
     chk(has(both, "NEVER guess a path") && has(both, "find(") && has(both, "run the command"), "prompt: never guess, find first, live state is a command");
     chk(has(both, "mazemaker_remember") && has(both, "already writes every finished turn"), "prompt: save only distilled facts");
     chk(!has(both, "RECALL FIRST") && !has(both, "NO EXCEPTIONS") && !has(both, "session_search") && !has(both, "already done"), "prompt: none of the three old voices");
-    chk(both.size() < 1500, "prompt: the contract is short (" + std::to_string(both.size()) + " chars)");
+    chk(both.size() < 1800, "prompt: the contract is short (" + std::to_string(both.size()) + " chars)");   // 1500 until 2026-11-12: the memory block got its own line
     c.memory = false;
     c.find = false;
     const std::string small = PromptComposer::retrieval_contract(c);
@@ -1216,6 +1294,13 @@ static void test_policy() {
     const Policy d = Policy::from(core::Config(core::Json{}));
     chk(d.skills.min_matched == 2 && d.skills.offer_mass == 9.5 && d.skills.offer_score == 0.15 && d.skills.open_score == 0.40 && d.skills.calibrated_at == 502,
         "policy: the defaults are the measured numbers, fitted at 502 skills");
+    chk(d.memory.open_score == 0.45 && d.deep_required && d.shift_deep && d.deep_tokens == 2500 && d.max_turn_tokens == 4000,
+        "policy: a memory opens, the recall is owed to the turn, a shift asks the pod, the deep leg has its own room");
+    {
+        const Policy c = Policy::from(core::Config(core::parse_yaml(
+            "knowledge:\n  deep_required: false\n  budget:\n    deep_tokens: 800\n  confidence:\n    memory_open_score: 0.6\n  mid_turn:\n    shift_deep: false\n")));
+        chk(!c.deep_required && c.deep_tokens == 800 && c.memory.open_score == 0.6 && !c.shift_deep, "policy: the new knobs read from config.yaml");
+    }
     {   // a config that pins a mass pins the catalogue size it was fitted at: a moved default may not rescale it
         const Policy c = Policy::from(core::Config(core::parse_yaml("knowledge:\n  confidence:\n    offer_mass: 6.5\n    calibrated_at: 568\n")));
         chk(c.skills.offer_mass == 6.5 && c.skills.calibrated_at == 568, "policy: calibrated_at is read beside offer_mass");
@@ -1331,6 +1416,8 @@ int main() {
     test_refresher_parks();
     test_router_turn(tmp);
     test_router_open_head(tmp);
+    test_router_memory_head(tmp);
+    test_router_await(tmp);
     test_model_open_is_logged(tmp);
     test_router_budget(tmp);
     test_router_deep(tmp);

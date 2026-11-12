@@ -84,6 +84,7 @@ std::vector<Hit> hits_of(const std::string& text) {
             h.id = num(o, "id");
             h.label = str(o, "label");
             h.content = str(o, "content");
+            h.chars = static_cast<size_t>(std::max(0L, num(o, "content_chars")));
             for (const char* k : {"similarity", "activation", "salience", "score"})
                 if (const Json* s = core::json_get(o, k); s && s->type == Json::Num) {
                     h.score = s->num;
@@ -177,7 +178,7 @@ std::vector<Hit> Maze::recall(const std::string& query, int limit, const std::st
     if (trim(query).empty()) return {};
     Json args = core::json_obj({{"query", jsp(core::json_str(query))},
                                 {"limit", jsp(core::json_num(limit))},
-                                {"max_chars", jsp(core::json_num(600))},
+                                {"max_chars", jsp(core::json_num(static_cast<double>(recall_chars)))},
                                 {"rerank", jsp(core::json_bool(false))}});   // the CPU rerank costs seconds per hit
     if (!scope.empty()) core::obj_set(args, "scope", core::json_str(scope));
     return hits_of(call("mazemaker_recall", core::json_dump(args), recall_timeout_ms));

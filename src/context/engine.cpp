@@ -869,6 +869,33 @@ void TapeEngine::after_tools() {
     emit();
 }
 
+// ---- before the answer is final ----
+
+bool TapeEngine::before_final(const core::Message& answer) {
+    if (!router_ || !turn_open_ || answer.content.empty()) return false;
+    if (!router_->deep_pending()) {   // nothing owed: an answer may still be lying ready from a round that never came
+        const auto ready = router_->late();
+        if (!ready) return false;
+        append_note(ready->note + "\n\n[The memory's answer above arrived after your reply. If it changes anything, "
+                                  "answer again with it; if not, give the final answer again in full -- the reply after "
+                                  "this note is the one the operator reads.]");
+        note("◈ " + ready->summary + " · after the draft");
+        emit();
+        return true;
+    }
+    if (on_recall) on_recall(true);
+    const auto held = router_->await_deep();
+    if (on_recall) on_recall(false);
+    if (!held) return false;
+    append_note(held->note + "\n\n[The memory's answer above landed after your reply: it was asked for this question "
+                             "and the turn waited for it. Read it. If it changes anything, answer again with it; if not, "
+                             "give the final answer again in full -- the reply after this note is the one the operator reads.]");
+    last_recall_ = held->summary + " · held the answer for it";
+    note("◈ " + last_recall_);
+    emit();
+    return true;
+}
+
 // ---- turn end ----
 
 void TapeEngine::end_turn(const std::string& final_response, bool interrupted) {

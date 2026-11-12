@@ -66,7 +66,10 @@ struct Refusal {
 
 struct Policy {
     Confidence skills;
-    Confidence memory{3, 6.5, 0.20, 2.0};   // curated rows are many and long: three terms, and never opened for the model
+    // Curated rows are many and long: three terms. A confident one is OPENED for the model (its head, as a
+    // skill's is), not pointed to: the live log of 2026-11-09 holds 872 memory pointers and 0 opens, so a
+    // pointer to a memory is attention spent on nothing. The bar is the skill's open bar plus a little.
+    Confidence memory{3, 6.5, 0.20, 0.45};
     int deep_ms = 8000;     // a turn start waits UP TO this long for the pod's recall: a local pod returns at once,
                             // a pod on another machine gets longer than one turn. Patience, not a deadline -- an
                             // answer that misses it is carried into the next turn, never dropped.
@@ -75,7 +78,20 @@ struct Policy {
     // head start is the point: on a pod on another machine a recall takes longer than a turn, so a
     // question that arrives before the ask finds its answer already being written.
     bool proactive = true;
-    size_t turn_tokens = 600, hint_tokens = 250, failure_tokens = 300, stall_tokens = 350, max_turn_tokens = 1500;
+    // The memory is not optional. A turn that ends without a tool call never reaches the round where a
+    // late recall is delivered, so before the model's answer is taken as final the engine waits for the
+    // recall still owed to this turn -- up to deep_recall_ms in all -- and, if it says anything, hands
+    // it over and asks once more. Off: a late recall rides the next turn, as before.
+    bool deep_required = true;
+    // A shift mid-turn (the task moved to terms the turn has not covered) asks the pod too, without
+    // waiting: the answer lands with a later round. Capped per turn, and never while a recall of this
+    // turn is still unanswered (the pod answers one at a time).
+    bool shift_deep = true;
+    int shift_deep_per_turn = 2;
+    // Budgets, in server tokens. The deep block has its own (deep_tokens): the pod's answer is the
+    // knowledge the operator asked for, not a hint, and it is not cut to fit beside the pointers.
+    size_t turn_tokens = 900, hint_tokens = 300, failure_tokens = 360, stall_tokens = 420, max_turn_tokens = 4000;
+    size_t deep_tokens = 2500;
     size_t open_head_bytes = 4200;           // the head opened for the model: ~1.2k tokens
     size_t open_max_bytes = 16000;           // a skill past this is never opened for the model, only pointed to
     int top_k = 3;

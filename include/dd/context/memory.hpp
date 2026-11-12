@@ -19,6 +19,7 @@ struct Hit {
     long id = 0;
     std::string label, content;
     double score = 0;   // similarity, activation or salience, by call
+    size_t chars = 0;   // the row's whole size when the pod sent a cut body (content_chars); 0: not said
 };
 
 struct Edge {

@@ -15,9 +15,13 @@ Policy Policy::from(const core::Config& cfg) {
     num("knowledge.deep_ms", p.deep_ms);
     num("knowledge.deep_recall_ms", p.deep_recall_ms);
     flag("knowledge.proactive", p.proactive);
+    flag("knowledge.deep_required", p.deep_required);
+    flag("knowledge.mid_turn.shift_deep", p.shift_deep);
+    num("knowledge.mid_turn.shift_deep_per_turn", p.shift_deep_per_turn);
     num("knowledge.budget.turn_tokens", p.turn_tokens);
     num("knowledge.budget.hint_tokens", p.hint_tokens);
     num("knowledge.budget.max_turn_tokens", p.max_turn_tokens);
+    num("knowledge.budget.deep_tokens", p.deep_tokens);
     if (cfg.has("knowledge.budget.hint_tokens")) {   // a failure or a stall may say a little more than a shift
         p.failure_tokens = p.hint_tokens + p.hint_tokens / 5;
         p.stall_tokens = p.hint_tokens + p.hint_tokens * 2 / 5;
@@ -31,6 +35,7 @@ Policy Policy::from(const core::Config& cfg) {
     num("knowledge.confidence.open_score", p.skills.open_score);
     num("knowledge.confidence.memory_offer_score", p.memory.offer_score);
     num("knowledge.confidence.memory_offer_mass", p.memory.offer_mass);
+    num("knowledge.confidence.memory_open_score", p.memory.open_score);
     num("knowledge.open_max_bytes", p.open_max_bytes);
     num("knowledge.top_k", p.top_k);
     flag("knowledge.refusal.enabled", p.refusal.on);

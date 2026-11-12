@@ -1557,7 +1557,7 @@ int main(int argc, char** argv) {
     maze->recall_timeout_ms = static_cast<long>(num_or("memory.recall_timeout_ms", 120000));
     // The small calls around a recall (intent, facts, graph reads, think) run on the deep leg's own
     // thread: their deadline is the pod's room, not the turn's.
-    maze->enrich_timeout_ms = static_cast<long>(num_or("memory.enrich_timeout_ms", 20000));
+    maze->enrich_timeout_ms = static_cast<long>(num_or("memory.enrich_timeout_ms", 20000)); maze->recall_chars = static_cast<long>(num_or("memory.recall_chars", 2400));   // ... and how much of a row one recall brings
     ec.recall_timeout_ms = maze->recall_timeout_ms;
     ec.prewarm = !cfg.has("compression.prewarm") || cfg.get_bool("compression.prewarm");
     if (const char* v = std::getenv("DD_FAST_LAYER")) ec.fast_layer_tokens = std::atol(v);   // tests force a rebase

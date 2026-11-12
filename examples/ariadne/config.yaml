@@ -97,6 +97,9 @@ memory:
                            # hardcoded and a pod behind a tunnel blew through them under load.
   recall_timeout_ms: 120000 # how long ONE pod recall may take before its request is given up. The turn never waits
                            # that long (knowledge.deep_ms is the turn's patience); this is the pod's own room.
+  recall_chars: 2400       # how much of each row ONE recall brings back: a whole curated row (60-300 words). The deep
+                           # leg renders its top rows whole; a longer row says so and is read back by id. Bytes are not
+                           # the cost: 24 whole rows came back in 4.4 s against 4.0 s for 6 snippets (2026-11-12, tunnel).
   soak:
     window_turns: 18       # an epoch's head window: 2x this many messages before the question
 
@@ -119,10 +122,16 @@ knowledge:
   proactive: true          # ask the pod BETWEEN turns, about the open ledger and the question just answered, so the next
                            # question finds its answer already being written. A question that arrives while it runs takes
                            # that answer over; a guess nobody took rides the next turn as background.
+  deep_required: true      # the memory is owed to the turn that asked. A turn that ends without a tool call never reaches
+                           # the round where a late recall is delivered, so before the model's draft becomes the answer the
+                           # harness waits for the recall still in flight (the rest of deep_recall_ms in all) and, when it
+                           # says something, hands it over and asks once more. false: a late recall rides the next turn.
   budget:
-    turn_tokens: 600       # the note on a question
-    hint_tokens: 250       # a note after a tool batch
-    max_turn_tokens: 1500  # everything retrieval adds to one turn
+    turn_tokens: 900       # the note on a question (pointers and the one skill / memory opened for the model)
+    hint_tokens: 300       # a note after a tool batch
+    max_turn_tokens: 4000  # everything retrieval adds to one turn
+    deep_tokens: 2500      # the pod's recall block: its own room, in layers (knowledge whole, skills, how it was reasoned
+                           # through before, earlier sessions, graph neighbours, facts). Not a hint: this IS the memory.
   confidence:              # calibrated with `dd replay` on real prompts against the real catalogue
     offer_score: 0.15      # a skill is offered when it holds this share of the question's evidence ...
     offer_mass: 9.5        # ... and that is this much evidence in absolute terms, fitted at 502 skills
@@ -130,6 +139,9 @@ knowledge:
     open_score: 0.40       # at this share the head of the skill is opened for the model: below it a pointer only
     memory_offer_mass: 8.0 # curated rows are long and their pointers convert poorly (a pointer need not be opened
     memory_offer_score: 0.20 # to be useful), so the bar moves half as far as the skill bar, not as far
+    memory_open_score: 0.45 # at this share the curated row itself is opened for the model (<memory>), as a skill's head
+                           # is: 872 memory pointers in the live log of 2026-11-09 were opened 0 times, so a pointer to a
+                           # memory buys nothing; the text is one primary-key read away and lands in the FIRST call
   refusal:                 # a card offered often and opened almost never does not keep a slot (docs/KNOWLEDGE.md)
     enabled: true
     offers: 8              # decayed offers ...
@@ -145,6 +157,8 @@ knowledge:
     k1: 2.0
   mid_turn:
     shift: true            # the task moved to something new
+    shift_deep: true       # ... and the pod is asked about it too, without a wait: the answer lands with a later round
+    shift_deep_per_turn: 2 # at most this many shift recalls per turn, never while the turn's own recall is unanswered
     failure: true          # a call failed twice, or its error is a known one
     stall: true            # the same call twice, or three blind explorations
   rules: true              # tripwires: ./rules/*.md and the maze's rule: rows

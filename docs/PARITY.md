@@ -101,7 +101,7 @@ typed mid-turn lands in a `core::SlotRing<16>` (`src/dd_tui.cpp:1906`) and `Agen
 (`src/dd_tui.cpp:1958`) claims it with `claim_all()` — the payloads it pinned, oldest stamp first, so a
 prompt typed earlier enters earlier however the slots wrapped. Overflow is held in a list the key handler
 owns alone, and once anything is held everything typed after it waits too. The
-loop calls at the tool-round boundary (`src/agent/agent.cpp:450`) — after the tool results are
+loop calls at the tool-round boundary (`src/agent/agent.cpp:460`) — after the tool results are
 appended, before the next request — and the prompts it returns ride as user messages.
 `TapeEngine::on_steering` (`src/context/engine.cpp:835`) stamps each one with `steered`, so the
 fold is a fact of the tape rather than a widget's guess: the prompt card carries
@@ -196,6 +196,37 @@ only way these numbers stay true. What the rule costs per offer is a line in the
 it saves is the `find()` call the operator would otherwise make, and the corpus cannot measure
 that second half — a saved call leaves no trace in the log.
 
+### Deep recall — closed: layered, whole, and owed to the turn
+
+Measured on the live router log before the change (`~/ariadne/logs/knowledge.jsonl`, 3,434 signals,
+2026-10-22 → 2026-11-12): 594 turn starts, of which the pod's recall landed in the turn 131 times
+(22%), late 348 (59%), as a carry from an earlier question 89, as a prefetch 18. 872 memory pointers
+offered, 0 opened; 1,593 skill pointers, 100 opened. The deep block itself was one recall of 6 rows at
+600 characters, rendered as 420-character lines inside 300–1,500 tokens — the first surface of a
+330,059-row graph, and the part of it that arrived after the model had already started.
+
+What changed (`src/context/recall.cpp`, `src/know/router.cpp`, `src/agent/agent.cpp`,
+`src/context/engine.cpp`, docs/KNOWLEDGE.md § 15):
+
+- One wide recall (24 rows, whole bodies) cut into layers by label on this side — knowledge, skills,
+  reasoning chains, episodes, facts — the top knowledge rows rendered whole, graph neighbours and
+  extracted facts from the top two, its own 2,500-token budget. Through the tunnel a 6-row recall
+  took 4.0 s and a 24-row whole-body recall 4.4 s (57 KB), so the depth costs nothing on the clock;
+  three-angle `recall_multi` took 29.7 s and is not used. The pod's `scope` filter leaks (a curated
+  scope answered with a transcript at rank 1), so no scope is relied on.
+- A curated memory the lexical leg is sure of (`memory_open_score` 0.45) is opened in the turn note as
+  `<memory>`, not pointed at: the only memory that reaches the FIRST call of a turn whatever the pod's latency.
+- `knowledge.deep_required`: a turn that answers without a tool call waits out the rest of
+  `deep_recall_ms` for the recall it asked for, gets it under the draft, and is asked once more.
+  12% of top-level turns in the harness log ended on the first call (3 of 25), and 59% of recalls
+  were late: those turns never saw their memory at all.
+- A mid-turn shift asks the pod too (no wait, two per turn).
+
+Proof: `make build/dd_maze_tests build/dd_know_router_tests build/dd_agent_run_tests` (the layered
+block, the memory head, `await_deep`, `before_final`). The conversion numbers above are the baseline
+the next replay is measured against; the budgets (`knowledge.budget.*`) are the trade, written in
+`examples/ariadne/config.yaml`.
+
 ## Seam graph
 
 The three seams the ledger above claims, as shipped objects. The highlight seam is what the Rust grammar table
@@ -274,7 +305,7 @@ classDiagram
 Anchors: `include/dd/ui.hpp:73` (Canvas), `:101` (Frame), `:206-220` (GrammarSet::load), `:234-243` (CodeCtx),
 `:381` (Scene), `:485` (`SlotRing<kEventSlots, Event> q_`), `:502` (LiveBuf), `:521-522` (the paint cache),
 `include/dd/agent/agent.hpp:99` (`steer_hook`), `include/dd/context/engine.hpp:86` (`on_steering`),
-`include/dd/learn/sink.hpp:43`, `include/dd/know/router.hpp:74`, `src/context/maze.cpp:269`
+`include/dd/learn/sink.hpp:43`, `include/dd/know/router.hpp:78`, `src/context/maze.cpp:270`
 (`SlotRing<256, Job>`).
 
 ## Plan

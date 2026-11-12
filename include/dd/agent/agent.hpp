@@ -62,6 +62,10 @@ struct ContextEngine {
     // The loop's ephemeral prompt (the plan), handed over before every call. true: the engine keeps it
     // where the cached prefix survives it; false: the loop sends it behind the payload.
     virtual bool take_ephemeral(const std::string& /*prompt*/) { return false; }
+    // The model answered without a tool call and the loop is about to take it as the turn's answer. true: the
+    // engine appended something the model has not seen (the recall it was owed) and the loop asks once more;
+    // false: the answer stands. Asked at most once per turn.
+    virtual bool before_final(const core::Message& /*answer*/) { return false; }
 };
 
 // A rule that can refuse a tool call before it runs. veto() returns the tool result the model gets

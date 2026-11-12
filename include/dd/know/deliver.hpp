@@ -2,7 +2,7 @@
 // dd/know/deliver.hpp — what a note looks like to the model, and what it costs.
 //
 // A note is pointers (one line per card: kind, name, score, what it is for, how to open it) and,
-// for a skill the router is sure of, the head of its text opened for the model. Everything is
+// for a skill or a memory the router is sure of, the head of its text opened for the model. Everything is
 // counted in server tokens (chars/4 at the ratio the server measured) against the room the signal
 // was given: a note that does not fit is cut at a line, never in the middle of one.
 
@@ -21,6 +21,8 @@ struct Shown {
     std::vector<Hit> skills, memory, tools;
     std::optional<Body> head;   // the opened head of the best skill
     std::string head_title;
+    std::optional<Body> mem_head;   // the opened head of the best memory: its text, not a pointer to it
+    std::string mem_head_title;     // its label
 };
 
 class Deliverer {
@@ -33,7 +35,7 @@ public:
     // budget: tokens for the pointers; total_budget: for the whole note, an opened head included.
     // offered / head_in (optional) say which cards made it in.
     std::string note(const Shown& s, const std::string& why, size_t budget, size_t total_budget, std::vector<Uri>* offered = nullptr,
-                     bool* head_in = nullptr) const;
+                     bool* head_in = nullptr, bool* mem_head_in = nullptr) const;
     // <system-notice reason="..."> text </system-notice>
     static std::string notice(const std::string& reason, const std::string& text);
     // The skills the model was working from before the window was rebuilt, as pointers.

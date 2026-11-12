@@ -77,6 +77,11 @@ void ShiftTrigger::plan(const Signal& s, const PlanContext& c, Plan& out) const 
     Intent in;
     in.kinds = {Kind::Skill, Kind::Memory};
     in.query = q;
+    // the deep leg too, without a wait: the words of the shift are the query, the work in flight its anchor
+    in.deep = c.policy.shift_deep;
+    in.wait_ms = 0;
+    in.query.text = fresh;
+    if (!c.ws.question().empty()) in.query.text += "\nwhile working on: " + c.ws.question().substr(0, 300);
     in.where = Placement::AfterTools;
     in.tokens = c.policy.hint_tokens;
     in.reason = "shift: " + fresh;

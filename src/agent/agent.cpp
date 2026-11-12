@@ -346,6 +346,7 @@ std::string Agent::run_loop(const std::string& user_message, bool& interrupted) 
     std::string final_response;
     int blank_replies = 0;   // replies that answered nothing; retried while the turn has tries left
     int cut_replies = 0;     // replies the budget cut off mid-sentence; asked to go on while tries remain
+    bool held_once = false;  // the engine held a draft back once (the recall it was owed landed): never twice
 
     while (api_call_count < max_iterations && budget->remaining() > 0) {
         if (interrupt_requested) { interrupted = true; break; }
@@ -423,6 +424,15 @@ std::string Agent::run_loop(const std::string& user_message, bool& interrupted) 
                         "\n\n(The reply was cut off by the token budget " + std::to_string(cut_replies) +
                         " time(s) and could not be continued, so the turn ends here.)";
                     break;
+                }
+                // The memory is owed to this turn. An engine that still has the recall for this question
+                // in flight waits it out here -- the rest of the past-question budget -- and, when it
+                // says something, appends it and asks once more: the draft is on the tape, the recall
+                // under it, and the next reply is the answer. One hold per turn, never on an interrupt.
+                if (context && !held_once && !interrupt_requested.load(std::memory_order_acquire) &&
+                    api_call_count < max_iterations && budget->remaining() > 0 && context->before_final(assistant)) {
+                    held_once = true;
+                    continue;
                 }
                 final_response = assistant.content;
                 break;

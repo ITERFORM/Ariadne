@@ -46,7 +46,7 @@ std::string line_text(const std::string& s) {
 }
 
 bool tag_name_at(const std::string& s, size_t i) {   // s[i] is '<': the harness's own tags, closing or opening
-    static const char* const names[] = {"skill", "retrieval", "system-notice", "memory-context"};
+    static const char* const names[] = {"skill", "memory", "retrieval", "system-notice", "memory-context"};
     size_t k = i + 1;
     if (k < s.size() && s[k] == '/') ++k;
     for (const char* n : names) {
@@ -104,10 +104,11 @@ std::string Deliverer::pointer(const Hit& h) {
 }
 
 std::string Deliverer::note(const Shown& s, const std::string& why, size_t budget, size_t total_budget, std::vector<Uri>* offered,
-                            bool* head_in) const {
+                            bool* head_in, bool* mem_head_in) const {
     std::string body;
     bool full = false;
     if (head_in) *head_in = false;
+    if (mem_head_in) *mem_head_in = false;
     auto add = [&](const Hit& h) {
         if (full) return;
         const std::string line = pointer(h) + "\n";
@@ -132,6 +133,22 @@ std::string Deliverer::note(const Shown& s, const std::string& why, size_t budge
         if (tokens(body) + tokens(opened) <= total_budget) {
             body += opened;
             if (head_in) *head_in = true;
+        }
+    }
+    // A memory the router is sure of is read to the model, not pointed at: a pointer to a memory was
+    // never followed (872 offered, 0 opened in the live log), and the text is one primary-key read away.
+    if (s.mem_head && total_budget > tokens(body)) {
+        const Body& b = *s.mem_head;
+        const std::string page = std::to_string(b.page) + "/" + std::to_string(b.pages);
+        const std::string text = neutralize_tags(b.text);
+        std::string opened = "memory opened for you — #" + b.uri.id + " [" + line_text(s.mem_head_title) + "], page " + page +
+                             " (the harness's own note on this; may be older than the files):\n<memory id=\"" + attr(b.uri.id, 24) +
+                             "\" label=\"" + attr(s.mem_head_title, 80) + "\" page=\"" + page + "\">\n" + text +
+                             (text.empty() || text.back() != '\n' ? "\n" : "") + "</memory>\n";
+        if (!b.more.empty()) opened += "more: read_file(\"" + b.more + "\")\n";
+        if (tokens(body) + tokens(opened) <= total_budget) {
+            body += opened;
+            if (mem_head_in) *mem_head_in = true;
         }
     }
     if (body.empty()) return "";

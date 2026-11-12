@@ -65,6 +65,12 @@ public:
     // memory.enrich_timeout_ms overrides it.
     long enrich_timeout_ms = 20000;
 
+    // How much of each row ONE recall brings back. A curated row is 60-300 words and the deep leg
+    // renders its top rows whole, so the default covers a whole decision; what is longer says so
+    // (content_chars) and is read back by id. Bytes are not the cost here: 24 rows with whole
+    // bodies came back in 4.4 s against 4.0 s for 6 rows at 600 chars (2026-11-12, over the tunnel).
+    long recall_chars = 2400;
+
 private:
     std::string url_, health_;
     std::atomic<bool> up_{false};

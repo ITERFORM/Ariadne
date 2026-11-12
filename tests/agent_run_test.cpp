@@ -98,6 +98,12 @@ struct Spy : agent::ContextEngine {
         last_final = f;
         if (throw_on_end) throw std::runtime_error("end_turn failed");
     }
+    bool hold = false;                  // holds the first draft back once, as a tape owed a recall does
+    std::vector<std::string> drafts;    // what before_final was shown
+    bool before_final(const core::Message& m) override {
+        drafts.push_back(m.content);
+        return hold && drafts.size() == 1;
+    }
 };
 
 static void add_tool(tools::ToolRegistry& reg, const std::string& name, std::function<std::string(const Json&)> h) {
@@ -694,7 +700,52 @@ static void test_reasoning_only_reply() {
     }
 }
 
+// The engine may hold a draft back once (the recall owed to the turn landed): the loop asks again and the
+// second reply is the answer; an engine that holds nothing ends the turn on the first reply.
+static void test_before_final() {
+    {
+        tools::ToolRegistry reg;
+        Script llm;
+        llm.replies = {answer_here("draft"), answer_here("revised with the recall")};
+        Spy spy;
+        spy.hold = true;
+        agent::Agent ag;
+        ag.registry = &reg;
+        ag.llm = &llm;
+        ag.context = &spy;
+        const std::string out = ag.run("q");
+        chk(out == "revised with the recall" && llm.calls == 2, "before_final: a held draft is asked again, the second reply is the answer");
+        chk(spy.drafts.size() == 1 && spy.drafts[0] == "draft", "before_final: asked once per turn, for the first final reply");
+        chk(spy.assistant_contents.size() == 2 && spy.last_final == "revised with the recall", "before_final: both replies reach the tape, the turn ends with the second");
+    }
+    {
+        tools::ToolRegistry reg;
+        Script llm;
+        llm.replies = {answer_here("draft")};
+        Spy spy;
+        agent::Agent ag;
+        ag.registry = &reg;
+        ag.llm = &llm;
+        ag.context = &spy;
+        chk(ag.run("q") == "draft" && llm.calls == 1 && spy.drafts.size() == 1, "before_final: an engine that holds nothing ends the turn at once");
+    }
+    {   // the last allowed iteration is never held: there is no call left to answer again with
+        tools::ToolRegistry reg;
+        Script llm;
+        llm.replies = {answer_here("draft")};
+        Spy spy;
+        spy.hold = true;
+        agent::Agent ag;
+        ag.registry = &reg;
+        ag.llm = &llm;
+        ag.context = &spy;
+        ag.max_iterations = 1;
+        chk(ag.run("q") == "draft" && llm.calls == 1, "before_final: no hold on the last iteration");
+    }
+}
+
 int main() {
+    test_before_final();
     test_interrupt_sequential();
     test_interrupt_parallel();
     test_interrupt_before_batch();

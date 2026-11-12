@@ -2333,7 +2333,7 @@ Canvas Scene::render(const Entry& e, int w) const {
         int y = 1;
         for (int k = 0; k < shown; ++k, ++y) {
             const MemoryRow& r = v.rows[static_cast<size_t>(k)];
-            const char* glyph = r.kind == 'l' ? "↳" : r.kind == 'f' ? "∴" : r.kind == 'e' ? "⟲" : "◆";
+            const char* glyph = r.kind == 'l' ? "↳" : r.kind == 'f' ? "∴" : r.kind == 'e' ? "⟲" : r.kind == 's' ? "⚙" : r.kind == 'c' ? "∿" : r.kind == 'p' ? "≡" : "◆";
             c.text(2, y, glyph, Style{r.kind == 'r' ? th_.gold : th_.accent, kNone, kBold});
             int x = 4;
             const std::string id = "#" + std::to_string(r.id);
