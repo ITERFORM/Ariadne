@@ -212,8 +212,9 @@ What changed (`src/context/recall.cpp`, `src/know/router.cpp`, `src/agent/agent.
   reasoning chains, episodes, facts — the top knowledge rows rendered whole, graph neighbours and
   extracted facts from the top two, its own 2,500-token budget. Through the tunnel a 6-row recall
   took 4.0 s and a 24-row whole-body recall 4.4 s (57 KB), so the depth costs nothing on the clock;
-  three-angle `recall_multi` took 29.7 s and is not used. The pod's `scope` filter leaks (a curated
-  scope answered with a transcript at rank 1), so no scope is relied on.
+  three-angle `recall_multi` took 29.7 s and is not used. The pod's `scope` filter leaked (a curated
+  scope answered with a transcript at rank 1) until pod 1.22.3 closed it in the supersedes traversal;
+  an older pod still leaks, so no scope is relied on.
 - A curated memory the lexical leg is sure of (`memory_open_score` 0.45) is opened in the turn note as
   `<memory>`, not pointed at: the only memory that reaches the FIRST call of a turn whatever the pod's latency.
 - `knowledge.deep_required`: a turn that answers without a tool call waits out the rest of

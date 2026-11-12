@@ -660,8 +660,9 @@ to the missing half; its cost is the pod's 6-17 s, so it stays asynchronous.
   the other layers are snippets; rows under similarity 0.25 and `ariadne:plan:*` revisions are dropped. The block has its own
   budget (`knowledge.budget.deep_tokens`, 2,500). Measured through the tunnel on 2026-11-12: a recall of 6 rows at 600 chars
   took 4.0 s, 24 rows with whole bodies 4.4 s (57 KB), so the width is free; `mazemaker_recall_multi` with three angles took
-  29.7 s (the angles are serialised on the pod), so multi-angle stays out of the turn; and the pod's `scope` filter leaks
-  (`scope=curated` answered with an `auto:turn:` row at rank 1), which is why the partition is done here and not there.
+  29.7 s (the angles are serialised on the pod), so multi-angle stays out of the turn; and the pod's `scope` filter leaked
+  (`scope=curated` answered with an `auto:turn:` row at rank 1; closed in pod 1.22.3, still true of an older pod), which is
+  why the partition is done here and not there.
 - **A confident memory is opened, not pointed at.** `Policy::memory.open_score` 2.0 → 0.45 (`memory_open_score`): the top
   curated card over the bar is read by id and fenced as `<memory id= label= page=>` in the turn note, like a skill's head; it
   counts as opened for the demand guard and the working set, and is not opened twice in an epoch.
