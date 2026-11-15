@@ -1175,6 +1175,13 @@ int main(int argc, char** argv) {
             dd::tools::admit_configured_url(u->str);
             auto mcp = std::make_unique<MCPClient>();
             mcp->url = u->str;
+            // One per-request deadline is not enough for every server: a tool that waits on a
+            // person's approval, or on a render, runs for minutes. `timeout` is seconds,
+            // `max_bytes` the largest reply this server may send back.
+            if (const Json* to = json_get(sv, "timeout"); to && to->type == Json::Num)
+                mcp->timeout_ms = std::clamp(to->num * 1000.0, 1000.0, 3600000.0);
+            if (const Json* mb = json_get(sv, "max_bytes"); mb && mb->type == Json::Num)
+                mcp->max_bytes = std::clamp<size_t>(static_cast<size_t>(mb->num), 1u << 10, 128u << 20);
             if (const Json* hs = json_get(sv, "headers"); hs && hs->type == Json::Obj)
                 for (const auto& [hk, hv] : hs->obj)
                     if (hv && hv->type == Json::Str) mcp->headers.emplace_back(hk, hv->str);   // ${ENV} is expanded per request
