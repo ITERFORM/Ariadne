@@ -51,7 +51,7 @@ void say(const std::string& s) {
 }
 
 struct Opts {
-    fs::path root;      // the repo: holds Makefile and installer/ariadne-install.cpp
+    fs::path root;      // the repo: holds Makefile and installer/ariadne_install.cpp
     fs::path home;      // the install: owns config.yaml, state/, logs/
     bool agent = false; // also install ariadne-agent
     bool cli = false;   // also install ariadne-skills (the skill catalogue CLI)
@@ -110,7 +110,7 @@ int bootstrap(const Opts& o) {
     say("compiling the sidegag itself");
     const std::string out = (o.root / "build" / "ariadne-install").string();
     const std::string cmd = "g++ -std=c++20 -O2 -Wall -Wextra -Werror -Wshadow -pipe -Iinclude -o " + out +
-                            " " + (o.root / "installer" / "ariadne-install.cpp").string();
+                            " " + (o.root / "installer" / "ariadne_install.cpp").string();
     if (passthru(cmd) != 0) { say("it does not compile; nothing else is attempted"); return EXIT_FAILED; }
     if (passthru(out + " --self-check") != 0) { say("the freshly built binary does not run"); return EXIT_FAILED; }
 
