@@ -16,7 +16,7 @@
 //   build/ariadne path/to/config.yaml -- "msg"    # explicit config (its folder is the home), single-shot msg
 //   build/ariadne --help | --version
 //   env: DD_HOME, DD_BASE_URL, DD_MODEL, DD_API_KEY, DD_MAX_TURNS, DD_TUI_COLS, DD_TUI_ROWS,
-//        DD_TUI_MOUSE=0 (keep the terminal's own mouse), NO_COLOR
+//        DD_TUI_MOUSE=0 (keep the terminal's own mouse), DD_CLIP=osc52|off (the copy badge: no helper / no copy), NO_COLOR
 //   commands: /help /tools /turns N /effort L /reasoning L|show|full|hide /verbose <level> (bare toggles; levels are ui.hpp's kVerbosityWords) /plan /context /rebase /resume /clear /learn /interrupt /mcp /<server> /quit
 
 #include "dd/agent/agent.hpp"
@@ -25,6 +25,7 @@
 #include "dd/net/server.hpp"
 #include "dd/serve/chat_api.hpp"
 #include "dd/agent/redact.hpp"
+#include "dd/clip.hpp"
 #include "dd/context/deck.hpp"
 #include "dd/context/endpoint.hpp"
 #include "dd/context/engine.hpp"
@@ -2115,7 +2116,7 @@ int main(int argc, char** argv) {
                 quit = true;
             } else if (cmd == "/help") {
                 scene.note("enter send · esc / ctrl-c interrupt · ↑↓ history · ctrl-←→ words · pgup/pgdn or wheel scroll (over the tools box: that list) · "
-                           "ctrl-l redraw · tab completes\n/effort off|low|…  /reasoning <effort>|show|full|hide  /verbose quiet|normal|full  /context  /rebase  "
+                           "ctrl-l redraw · tab completes · click ⧉ on a box's corner copies its text (DD_TUI_MOUSE=0 gives the terminal its own selection back)\n/effort off|low|…  /reasoning <effort>|show|full|hide  /verbose quiet|normal|full  /context  /rebase  "
                            "/resume  /retry (ask the last question again)  /tools  /turns N  /plan  /clear (new session)  /learn  /mcp  /<server>  /interrupt  /quit\\n"
                            "/verbose quiet|normal|full (the deck AND the log)  /log off|error|warn|info|debug|full (the file alone; bare: level, path, counts)");
             } else if (cmd == "/learn") {
@@ -2411,6 +2412,13 @@ int main(int argc, char** argv) {
         case K::PgDn: scene.scroll(-std::max(1, rows - 8)); break;
         case K::WheelUp: if (scene.over_tools(k.x, k.y)) scene.scroll_tools(-1); else scene.scroll(3); break;
         case K::WheelDown: if (scene.over_tools(k.x, k.y)) scene.scroll_tools(1); else scene.scroll(-3); break;
+        case K::Click:
+            if (const auto text = scene.copy_at(k.x, k.y)) {
+                const auto r = dd::clip::copy(*text, [](const std::string& s) { term::put(s); });
+                scene.note(r.bytes == 0 ? "copy is off (DD_CLIP=off)"
+                                        : "copied " + std::to_string(r.bytes) + " bytes" + (r.truncated ? " (the terminal copy is cut at 100 KB)" : ""));
+            }
+            break;
         case K::Tab: {
             const std::string typed = dd::ui::to_utf8(ed.buf);
             if (is_command(typed) && typed.find(' ') == std::string::npos) {

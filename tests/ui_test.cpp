@@ -1691,6 +1691,71 @@ int main() {
         chk(done, "the row past the directive word is still on the card");
     }
 
+    // ---- the copy badge: a click on a card's corner copies its raw text, not the screen cells ----
+    {
+        Scene s{Theme{}};
+        const std::string long_line(300, 'w');   // wraps on every width: the copy must not
+        s.user("first\nsecond " + long_line);
+        s.say("answer line one\nanswer line two\n\x1b[31mred\x1b[0m");
+        s.error("boom");
+        s.note("just a note");
+        std::string esc, plain;   // 100 result rows, newline-escaped for the JSON body
+        for (int i = 0; i < 100; ++i) {
+            esc += "row" + std::to_string(i) + "\\n";
+            plain += "row" + std::to_string(i) + "\n";
+        }
+        s.tool_call("c1", "run_terminal", "{\"cmd\":\"ls\"}");
+        s.tool_result("c1", "{\"cmd\":\"ls\",\"exit\":0,\"stdout\":\"" + esc + "\"}");
+        const int cols = 160, rows = 80;
+        s.present(cols, rows, false);
+        // one badge per copyable card, none on the note
+        std::vector<int> badge_rows;
+        for (int y = 0; y < rows; ++y)
+            if (s.row_text(y).find("⧉") != std::string::npos) badge_rows.push_back(y);
+        chk(badge_rows.size() == 4, "badge: user, say, error and tool cards each carry one (" + std::to_string(badge_rows.size()) + ")");
+        const auto col_of = [&](int y) {   // the glyph's column (row_text is UTF-8: count codepoints)
+            const std::string r = s.row_text(y);
+            const size_t b = r.find("⧉");
+            int c = 0;
+            for (size_t i = 0; i < b; ++i)
+                if ((static_cast<unsigned char>(r[i]) & 0xC0) != 0x80) ++c;
+            return c;
+        };
+        if (badge_rows.size() == 4) {
+            const auto user = s.copy_at(col_of(badge_rows[0]), badge_rows[0]);
+            chk(user && *user == "first\nsecond " + long_line, "badge: a user card copies its prompt unwrapped");
+            const auto say = s.copy_at(col_of(badge_rows[1]), badge_rows[1]);
+            chk(say && *say == "answer line one\nanswer line two\nred", "badge: an answer copies without borders, escapes stripped");
+            const auto err = s.copy_at(col_of(badge_rows[2]), badge_rows[2]);
+            chk(err && *err == "boom", "badge: an error card copies its message");
+            const auto tool = s.copy_at(col_of(badge_rows[3]), badge_rows[3]);
+            chk(tool && tool->rfind("run_terminal ", 0) == 0 && tool->find("row99") != std::string::npos,
+                "badge: a tool card copies the name, the args and the whole result, not the clipped view");
+            chk(tool && tool->find("row0\nrow1\n") != std::string::npos && tool->find("┤") == std::string::npos &&
+                    tool->find("│") == std::string::npos,
+                "badge: the copy has no border glyphs and keeps the result's lines");
+            // the corner is one cell wide; the cell inside it counts, other cells on the title row do not
+            chk(s.copy_at(col_of(badge_rows[2]) - 1, badge_rows[2]).has_value(), "badge: the cell inside the corner is part of the target");
+            chk(!s.copy_at(col_of(badge_rows[2]) - 4, badge_rows[2]).has_value(), "badge: elsewhere on the title row copies nothing");
+            chk(!s.copy_at(col_of(badge_rows[2]), badge_rows[2] + 1).has_value(), "badge: a click on the body copies nothing");
+            // feedback: the badge shows a check right after the copy
+            (void)s.copy_at(col_of(badge_rows[2]), badge_rows[2]);
+            s.present(cols, rows, false);
+            chk(s.row_text(badge_rows[2]).find("✓") != std::string::npos, "badge: it shows a check right after the copy");
+        }
+        chk(!s.copy_at(0, 0).has_value(), "badge: the frame's corner is not a badge");
+        chk(s.entry_text(9999).empty(), "badge: a stale index copies nothing");
+    }
+    {   // only cards whose first row is on screen carry a badge
+        Scene s{Theme{}};
+        for (int i = 0; i < 60; ++i) s.say("answer " + std::to_string(i));
+        s.present(120, 30, false);
+        size_t n = 0;
+        for (int y = 0; y < 30; ++y)
+            if (s.row_text(y).find("⧉") != std::string::npos) ++n;
+        chk(n > 0 && n < 30, "badge: only the visible cards carry one (" + std::to_string(n) + ")");
+    }
+
     if (g_fail) std::printf("%d FAILED\n", g_fail);
     else std::printf("ui: all passed (best kernels: %s)\n", best.c_str());
     return g_fail ? 1 : 0;

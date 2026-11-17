@@ -28,6 +28,7 @@
 #include <cstring>
 #include <deque>
 #include <memory>
+#include <optional>
 #include <string>
 #include <type_traits>
 #include <utility>
@@ -442,6 +443,10 @@ public:
                row >= tools_box_.y && row < tools_box_.y + tools_box_.h;
     }
     void scroll_tools(int rows) { tools_scroll_ = std::max(0, tools_scroll_ + rows); }   // + = older calls
+    // A click on a card's corner badge: that card's raw text, unwrapped and without borders (nullopt when the
+    // cell is no badge). The badge flashes a check mark for a moment. Render thread.
+    std::optional<std::string> copy_at(int col, int row);
+    std::string entry_text(size_t i) const;   // what a card's badge copies
     void set_reason_view(ReasonView v) { view_ = v; }
     ReasonView reason_view() const { return view_; }
     void set_verbosity(Verbosity v) { verb_ = v; }
@@ -564,6 +569,9 @@ private:
     int scroll_ = 0, tick_ = 0;
     mutable int tools_scroll_ = 0;                       // calls scrolled past, newest first; clamped as it paints
     mutable struct { int x = 0, y = 0, w = 0, h = 0; } tools_box_;   // where the box last landed
+    struct CopyHit { int x, y; size_t idx; };
+    mutable std::vector<CopyHit> copy_hits_;             // the badges of the last painted transcript
+    mutable int flash_idx_ = -1, flash_until_ = 0;       // the badge just clicked shows a check until tick_ passes this
     ReasonView view_ = ReasonView::Tail;
     Verbosity verb_ = Verbosity::Normal;
     std::unique_ptr<Frame> frame_;

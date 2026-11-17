@@ -15,12 +15,12 @@ namespace dd {
 namespace ui {
 
 enum class K { Char, Paste, Enter, Backspace, Delete, Left, Right, WordLeft, WordRight, Up, Down, Home, End,
-               PgUp, PgDn, WheelUp, WheelDown, Tab, Esc, CtrlC, CtrlD, CtrlK, CtrlL, CtrlU, CtrlW };
+               PgUp, PgDn, WheelUp, WheelDown, Click, Tab, Esc, CtrlC, CtrlD, CtrlK, CtrlL, CtrlU, CtrlW };
 
 struct Key {
     K k;
     std::u32string text;
-    int x = -1, y = -1;   // a wheel's cell, 0-based; -1 when the terminal did not say
+    int x = -1, y = -1;   // a wheel's or click's cell, 0-based; -1 when the terminal did not say
 };
 
 class KeyReader {
@@ -82,6 +82,7 @@ public:
                         }
                         if (fin == 'M' && b == 64) out.push_back(Key{K::WheelUp, {}, cx, cy});
                         if (fin == 'M' && b == 65) out.push_back(Key{K::WheelDown, {}, cx, cy});
+                        if (fin == 'M' && b == 0) out.push_back(Key{K::Click, {}, cx, cy});   // left press; the release is ignored
                         continue;
                     }
                     const bool ctrl = par.find(";5") != std::string::npos;

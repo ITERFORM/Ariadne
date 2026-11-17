@@ -114,8 +114,8 @@ fold must keep the per-call flag, or Esc stops one command and cancels the next 
 `dd::tools::interrupt` (`include/dd/tools/interrupt.hpp:19-27`): an atomic pointer to the flag the
 running call watches — `bind`, `current`, `signal`, `clear`, `is_interrupted` — because a global bool
 would fire a turn that has not started yet. The flag itself is `Agent::interrupt_requested`, bound once
-beside the agent (`src/dd_tui.cpp:1398`); a signal reaches it from the handler at
-`src/dd_tui.cpp:204-213`, the UI's own `interrupt()` override does the same (`src/dd_tui.cpp:478`), a
+beside the agent (`src/dd_tui.cpp:1399`); a signal reaches it from the handler at
+`src/dd_tui.cpp:205-214`, the UI's own `interrupt()` override does the same (`src/dd_tui.cpp:479`), a
 turn starts from `interrupt::clear()` (`src/dd_tui.cpp:463`), and every call in flight hands the module's
 pointer to the shell as `opt.cancel` (`src/dd_tui.cpp:231`, `src/dd_tui.cpp:247`). What the fold made
 visible: a plain signal had been setting a flag nothing read. The per-call pointer is still what the
@@ -192,7 +192,7 @@ The double level is where a run is read rather than watched. At `Verbose`:
 where it enters the prompt, its schema is not touched. `src/dd_tui.cpp:1188`
 masks the tool `description` through
 `dd::agent::mask_secret_tokens(desc->str, SecretPolicy::ServerProse)`;
-`src/dd_tui.cpp:1270` masks the server's `instructions` the same way. The
+`src/dd_tui.cpp:1271` masks the server's `instructions` the same way. The
 `inputSchema` node is deep-copied untouched (`:1105`), so names, enums and
 `required` stay byte-identical — a masked schema would make the model call things
 the server never offered. `SecretPolicy::ServerProse` deliberately drops the
@@ -302,7 +302,7 @@ so it is engineer-decidable like every other wave:
 | what | where | why it is in scope |
 |---|---|---|
 | 3 mutexes, 8 `lock_guard` sites | `src/agent/retry.cpp` (jitter counter), `src/agent/prompt_cache_boundary.cpp` (x3), `include/dd/gateway/pairing.hpp` + `src/gateway/pairing.cpp` (x4) | the only locks left anywhere, and 10d deleted them. Each was reached only by its own test binary (`tests/agent_retry_test.cpp`, `tests/agent_boundary_test.cpp`, `tests/gateway_pairing_test.cpp`) — single-threaded, so the lock guarded state no second thread reaches |
-| 5 queues | `src/context/maze.cpp:271` (`Job`), `src/context/maze.cpp:272` (`LedgerEntry`), `include/dd/know/router.hpp:140` (`opened_q_`), `include/dd/learn/sink.hpp:43` (`q_`), `include/dd/ui.hpp:504` (`Scene q_`) | Vyukov MPSC allocates one node per push and grows without bound. `Scene::llm_content` (`src/ui.cpp:1037`) posted an event per streamed delta, so a long answer was thousands of nodes and thousands of string copies on the hot path. These five lines are where each hand-off lives today: all five are `SlotRing`s |
+| 5 queues | `src/context/maze.cpp:271` (`Job`), `src/context/maze.cpp:272` (`LedgerEntry`), `include/dd/know/router.hpp:140` (`opened_q_`), `include/dd/learn/sink.hpp:43` (`q_`), `include/dd/ui.hpp:509` (`Scene q_`) | Vyukov MPSC allocates one node per push and grows without bound. `Scene::llm_content` (`src/ui.cpp:1046`) posted an event per streamed delta, so a long answer was thousands of nodes and thousands of string copies on the hot path. These five lines are where each hand-off lives today: all five are `SlotRing`s |
 | 6 deques | `src/core/json.cpp:201`, `include/dd/know/working_set.hpp:80`, `include/dd/learn/episode.hpp:53`, `include/dd/ui.hpp:520`, `include/dd/ui.hpp:522`, `include/dd/ui.hpp:528` | not hand-offs — each has exactly one owning thread. They stay; each must name it |
 | `core::park` / `unpark`, 12 sites | `src/know/catalogue.cpp`, `src/know/router.cpp`, `src/learn/sink.cpp`, `src/limbo/spawn.cpp` | a futex wait on an atomic word: no lock, nothing polls. Stays |
 | `fsx::FileLock` x3 + `Ledger::FileLock` | `src/context/maze.cpp:290`, `src/context/maze.cpp:313`, `src/context/maze.cpp:332`, `src/learn/ledger.cpp:47` | cross-process durability on the spool and the ledger, held by the kernel, not by us. Out of scope |
@@ -402,7 +402,7 @@ Done means the invariant is greppable: no lock, no queue, and every deque left s
   the depot bound and slot reuse.
 - `dd::limbo` — the in-process level that spawns or adopts an engine (`2b7017a`). `src/limbo/` and
   `include/dd/limbo/` are tracked, `--limbo [HOST:]PORT` is a flag of the TUI
-  (`src/dd_tui.cpp:643`), the level is constructed only when that flag is given
+  (`src/dd_tui.cpp:644`), the level is constructed only when that flag is given
   (`src/dd_tui.cpp:762`), and its three suites plus a TSan binary are in `TEST_BINS`/`TSAN_BINS`.
   What stays outside this repository is the engine itself — the llama adaptive base and the strata
   expert-streaming machinery, planned in the limbo repo's own plan. So the scope ruling is narrower

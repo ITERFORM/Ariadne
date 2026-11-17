@@ -77,6 +77,15 @@ void encode(std::string& o, char32_t c) {
     }
 }
 
+// The corner badge of a card: one cell, so a swap for another glyph is this line.
+constexpr char32_t kCopyGlyph = U'⧉';
+
+// Cards with a body worth copying; notes, rules and the wire line are chrome.
+bool copyable(Kind k) {
+    return k == Kind::User || k == Kind::Say || k == Kind::Tool || k == Kind::Error || k == Kind::Reason ||
+           k == Kind::Memory;
+}
+
 // Escapes and control bytes out, tabs to spaces.
 std::string clean(const std::string& s) {
     std::string t = dd::tools::sanitize_display_text(s);
@@ -1548,6 +1557,8 @@ Entry& Scene::push(Kind k, const std::string& text) {
         if (live_say_ == oldest) live_say_ = nullptr;
         entries_.pop_front();
         cache_.pop_front();
+        copy_hits_.clear();   // their indices just shifted; the next paint lays them again
+        flash_idx_ = -1;
         if (printed_ > 0) --printed_;
     }
     Entry e;
@@ -2392,6 +2403,34 @@ void Scene::paint_splash(Frame& f, int x, int y, int w, int h) const {
     center(ly + 8, "enter send  ·  esc interrupt  ·  ↑↓ history  ·  pgup/pgdn scroll  ·  /help", Style{th_.muted});
 }
 
+std::string Scene::entry_text(size_t i) const {
+    if (i >= entries_.size()) return {};
+    const Entry& e = entries_[i];
+    std::string o;
+    if (e.kind == Kind::Tool) {
+        o = e.name;
+        if (!e.text.empty()) o += " " + e.text;
+        if (e.resolved && !e.result.empty()) o += "\n\n" + result_facts(e.result).body;
+    } else if (e.kind == Kind::Memory) {
+        if (e.recall)
+            for (const MemoryRow& r : e.recall->rows)
+                o += (o.empty() ? "" : "\n") + ("#" + std::to_string(r.id) + " " + r.label + "  " + r.text);
+    } else {
+        o = e.text;
+    }
+    return dd::tools::sanitize_display_text(o);
+}
+
+std::optional<std::string> Scene::copy_at(int col, int row) {
+    for (const CopyHit& h : copy_hits_) {
+        if (row != h.y || col < h.x - 1 || col > h.x) continue;   // the corner and the cell inside it
+        flash_idx_ = static_cast<int>(h.idx);
+        flash_until_ = tick_ + 12;
+        return entry_text(h.idx);
+    }
+    return std::nullopt;
+}
+
 void Scene::paint_transcript(Frame& f, int x, int y, int w, int h) {
     const Style b{th_.border};
     f.box(x, y, w, h, b, true);
@@ -2437,10 +2476,18 @@ void Scene::paint_transcript(Frame& f, int x, int y, int w, int h) {
     scroll_ = std::min(scroll_, std::max(0, total - ih));
     const int top = std::max(0, total - ih - scroll_);
     int acc = 0;
+    copy_hits_.clear();
     for (size_t i = 0; i < entries_.size(); ++i) {
         const int bh = hs[i];
         const int a = std::max(acc, top), z = std::min(acc + bh, top + ih);
         if (z > a) f.blit(block(i, cw), a - acc, ix, iy + (a - top), z - a);
+        // the badge sits on the card's top-right corner, painted over the frame (the cached card is untouched)
+        if (acc >= top && acc < top + ih && cw <= iw && copyable(entries_[i].kind)) {
+            const int bx = ix + cw - 1, by = iy + (acc - top);
+            const bool hit = flash_idx_ == static_cast<int>(i) && tick_ < flash_until_;
+            f.put(bx, by, hit ? U'✓' : kCopyGlyph, Style{hit ? th_.ok : th_.accent, kNone, kBold});
+            copy_hits_.push_back({bx, by, i});
+        }
         acc += bh;
         if (acc >= top + ih) break;
     }
