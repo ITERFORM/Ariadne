@@ -34,6 +34,7 @@ static std::string name(const Key& k) {
     case K::WheelUp: return "WheelUp";
     case K::WheelDown: return "WheelDown";
     case K::Click: return "Click";
+    case K::MiddleClick: return "MiddleClick";
     case K::Tab: return "Tab";
     case K::Esc: return "Esc";
     case K::CtrlC: return "CtrlC";
@@ -41,6 +42,7 @@ static std::string name(const Key& k) {
     case K::CtrlK: return "CtrlK";
     case K::CtrlL: return "CtrlL";
     case K::CtrlU: return "CtrlU";
+    case K::CtrlV: return "CtrlV";
     case K::CtrlW: return "CtrlW";
     }
     return "?";
@@ -95,6 +97,8 @@ int main() {
     all_splits("\x1b[<65;120;45M", "WheelDown ");
     all_splits("\x1b[<0;10;5M\x1b[<0;10;5m", "Click ");   // the press is the click; its release says nothing
     all_splits("\x1b[<2;10;5M\x1b[<2;10;5m", "");   // other buttons say nothing
+    all_splits("\x1b[<1;10;5M\x1b[<1;10;5m", "MiddleClick ");   // the middle press pastes; mouse reporting keeps it from the terminal
+    all_splits("\x16", "CtrlV ");   // raw mode hands ctrl-v over as a byte: the TUI pastes itself
     all_splits("\x1bOA", "Up ");
     all_splits("\x1bOH", "Home ");
     all_splits("\x1b[200~hello\r\nworld\x1b[201~", "Paste:hello\nworld ");

@@ -2116,7 +2116,7 @@ int main(int argc, char** argv) {
                 quit = true;
             } else if (cmd == "/help") {
                 scene.note("enter send · esc / ctrl-c interrupt · ↑↓ history · ctrl-←→ words · pgup/pgdn or wheel scroll (over the tools box: that list) · "
-                           "ctrl-l redraw · tab completes · click ⧉ on a box's corner copies its text (DD_TUI_MOUSE=0 gives the terminal its own selection back)\n/effort off|low|…  /reasoning <effort>|show|full|hide  /verbose quiet|normal|full  /context  /rebase  "
+                           "ctrl-l redraw · tab completes · click ⧉ on a box's corner copies its text · ctrl-v or middle-click pastes (DD_TUI_MOUSE=0 gives the terminal its own mouse back)\n/effort off|low|…  /reasoning <effort>|show|full|hide  /verbose quiet|normal|full  /context  /rebase  "
                            "/resume  /retry (ask the last question again)  /tools  /turns N  /plan  /clear (new session)  /learn  /mcp  /<server>  /interrupt  /quit\\n"
                            "/verbose quiet|normal|full (the deck AND the log)  /log off|error|warn|info|debug|full (the file alone; bare: level, path, counts)");
             } else if (cmd == "/learn") {
@@ -2394,6 +2394,9 @@ int main(int argc, char** argv) {
         start_turn(p);
     };
 
+    // A copy says so on the prompt's title for a moment: a note would scroll the cards under the pointer.
+    std::string copy_hint;
+    std::chrono::steady_clock::time_point copy_hint_until{};
     auto handle = [&](const Key& k) {
         switch (k.k) {
         case K::Char: case K::Paste: ed.insert(k.text); break;
@@ -2415,9 +2418,15 @@ int main(int argc, char** argv) {
         case K::Click:
             if (const auto text = scene.copy_at(k.x, k.y)) {
                 const auto r = dd::clip::copy(*text, [](const std::string& s) { term::put(s); });
-                scene.note(r.bytes == 0 ? "copy is off (DD_CLIP=off)"
-                                        : "copied " + std::to_string(r.bytes) + " bytes" + (r.truncated ? " (the terminal copy is cut at 100 KB)" : ""));
+                copy_hint = r.bytes == 0 ? "copy is off (DD_CLIP=off)"
+                                         : "copied " + std::to_string(r.bytes) + " bytes · ctrl-v or middle-click pastes" +
+                                               (r.truncated ? " (the terminal copy is cut at 100 KB)" : "");
+                copy_hint_until = std::chrono::steady_clock::now() + std::chrono::seconds(4);
             }
+            break;
+        case K::MiddleClick:   // X11's paste: PRIMARY, then CLIPBOARD
+        case K::CtrlV:
+            if (const std::string t = dd::clip::paste(k.k == K::MiddleClick); !t.empty()) ed.insert(dd::ui::from_utf8(t));
             break;
         case K::Tab: {
             const std::string typed = dd::ui::to_utf8(ed.buf);
@@ -2515,6 +2524,7 @@ int main(int argc, char** argv) {
             for (const auto& m : arg_matches(typed, efforts)) hint += (hint.empty() ? "" : "  ") + m;
             if (hint.empty()) hint = efforts.empty() ? "this model has no reasoning switch" : "not offered by this model";
         }
+        if (hint.empty() && std::chrono::steady_clock::now() < copy_hint_until) hint = copy_hint;
         scene.set_input(ed.buf, ed.cur, hint);
         term::put(scene.present(cols, rows, truecolor));
     }
