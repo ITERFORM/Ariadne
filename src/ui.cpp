@@ -4,6 +4,7 @@
 #include "dd/core/config.hpp"
 #include "dd/core/json.hpp"
 #include "dd/tools/ansi_strip.hpp"
+#include "dd/ui_markdown.hpp"
 #include "dd/ui_simd.hpp"
 
 #include <algorithm>
@@ -75,6 +76,12 @@ void encode(std::string& o, char32_t c) {
         o.push_back(static_cast<char>(0x80 | ((c >> 6) & 0x3F)));
         o.push_back(static_cast<char>(0x80 | (c & 0x3F)));
     }
+}
+
+// Cards with a body worth copying; notes, rules and the wire line are chrome.
+bool copyable(Kind k) {
+    return k == Kind::User || k == Kind::Say || k == Kind::Tool || k == Kind::Error || k == Kind::Reason ||
+           k == Kind::Memory;
 }
 
 // Escapes and control bytes out, tabs to spaces.
@@ -524,6 +531,7 @@ std::string sgr(const Style& st, bool truecolor) {
     if (st.at & kDim) s += ";2";
     if (st.at & kItalic) s += ";3";
     if (st.at & kUnder) s += ";4";
+    if (st.at & kStrike) s += ";9";
     auto col = [&](uint32_t c, bool fg) {
         if (c == kNone) return;
         const unsigned r = (c >> 16) & 0xFF, g = (c >> 8) & 0xFF, b = c & 0xFF;
@@ -1012,6 +1020,13 @@ void Scene::set_max_turns(int n) {
 
 void Scene::user(const std::string& text) { Event e; e.ev = Ev::User; e.a = text; post(std::move(e)); }
 void Scene::say(const std::string& text) { Event e; e.ev = Ev::Say; e.a = text; post(std::move(e)); }
+void Scene::doc(const std::string& title, const std::string& markdown) {
+    Event e;
+    e.ev = Ev::Say;
+    e.a = markdown;
+    e.b = title.empty() ? std::string("help") : title;
+    post(std::move(e));
+}
 void Scene::note(const std::string& text) { Event e; e.ev = Ev::Note; e.a = text; post(std::move(e)); }
 void Scene::recalled(const RecallView& v) {
     Event e;
@@ -1548,6 +1563,8 @@ Entry& Scene::push(Kind k, const std::string& text) {
         if (live_say_ == oldest) live_say_ = nullptr;
         entries_.pop_front();
         cache_.pop_front();
+        copy_hits_.clear();   // their indices just shifted; the next paint lays them again
+        flash_idx_ = -1;
         if (printed_ > 0) --printed_;
     }
     Entry e;
@@ -1651,7 +1668,8 @@ void Scene::apply(Event& e) {
         break;
     case Ev::Say: {
         Entry& t = push(Kind::Say, e.a);
-        t.ms = last_.latency_ms;
+        t.name = e.b;                            // a doc card's title; an answer has none
+        t.ms = e.b.empty() ? last_.latency_ms : 0;
         t.resolved = true;
         break;
     }
@@ -1877,7 +1895,8 @@ const Canvas& Scene::block(size_t i, int w) {
     Cache& c = cache_[i];
     if (stale(i, w)) {
         const Entry& e = entries_[i];
-        c.block = render(e, w);
+        c.spots.clear();
+        c.block = render(e, w, &c.spots);
         c.w = w;
         c.tw = static_cast<int>(e.text.size());
         c.ver = e.ver;
@@ -2034,7 +2053,7 @@ size_t exit_prefix(const std::string& r) {
 
 }  // namespace
 
-Canvas Scene::render(const Entry& e, int w) const {
+Canvas Scene::render(const Entry& e, int w, std::vector<CopySpot>* spots) const {
     switch (e.kind) {
     case Kind::User: {
         const auto lines = wrap(e.text, w - 3, verb_ == Verbosity::Minimal ? 4 : verb_ == Verbosity::Verbose ? 30 : 10);
@@ -2051,28 +2070,36 @@ Canvas Scene::render(const Entry& e, int w) const {
     }
     case Kind::Say: {
         // dynamic height: the box grows with the stream as it writes (capped),
-        // then shrinks to the wrapped answer once resolved.
+        // then shrinks to the laid-out answer once resolved.
         const int cap = e.resolved ? 0 : (verb_ == Verbosity::Minimal ? 8 : verb_ == Verbosity::Verbose ? 64 : 24);
-        const auto lines = wrap(e.text, w - 4, cap);
-        const int h = static_cast<int>(lines.size()) + 3;
-        Canvas c(w, h);
         const Style b{th_.response};
-        c.box(0, 0, w, h - 1, b, true);
-        c.put(2, 0, U'┤', b);
-        c.put(3, 0, U' ', b);
-        const int n = c.gradient(4, 0, th_.response_label, th_.title, th_.hot, th_.gold, kBold);
-        c.put(4 + n, 0, U' ', b);
-        c.put(5 + n, 0, U'├', b);
-        if (e.ms > 0) c.title_right(w - 2, 0, fmt_ms(e.ms), Style{th_.muted}, b);
-        CodeCtx ctx;
-        ctx.diff_body = looks_like_diff(e.text);
-        ctx.set = &grammars_;
-        const bool code = ctx.diff_body || e.text.find("```") != std::string::npos;
-        const Style base{th_.text};
-        for (size_t k = 0; k < lines.size(); ++k) {
-            if (code) paint_row(c, 2, static_cast<int>(k) + 1, lines[k], th_, ctx, base, w - 4);
-            else c.text(2, static_cast<int>(k) + 1, lines[k], base);
+        const auto frame = [&](Canvas& c, int h) {
+            c.box(0, 0, w, h - 1, b, true);
+            c.put(2, 0, U'┤', b);
+            c.put(3, 0, U' ', b);
+            const int n = c.gradient(4, 0, e.name.empty() ? th_.response_label : e.name, th_.title, th_.hot, th_.gold, kBold);
+            c.put(4 + n, 0, U' ', b);
+            c.put(5 + n, 0, U'├', b);
+            if (e.ms > 0) c.title_right(w - 2, 0, fmt_ms(e.ms), Style{th_.muted}, b);
+        };
+        if (looks_like_diff(e.text) && e.text.find("```") == std::string::npos) {   // a bare patch keeps its rows and its +/-
+            const auto lines = wrap(e.text, w - 4, cap);
+            const int h = static_cast<int>(lines.size()) + 3;
+            Canvas c(w, h);
+            frame(c, h);
+            CodeCtx ctx;
+            ctx.diff_body = true;
+            ctx.set = &grammars_;
+            for (size_t k = 0; k < lines.size(); ++k) paint_row(c, 2, static_cast<int>(k) + 1, lines[k], th_, ctx, Style{th_.text}, w - 4);
+            return c;
         }
+        const MdOut md = render_markdown(e.text, w - 4, th_, &grammars_, !e.resolved, cap);
+        const int h = md.canvas.h() + 3;
+        Canvas c(w, h);
+        frame(c, h);
+        c.blit(md.canvas, 0, 2, 1, md.canvas.h());
+        if (spots)
+            for (const CopySpot& sp : md.spots) spots->push_back({sp.x + 2, sp.y + 1, sp.text});
         return c;
     }
     case Kind::Tool: {
@@ -2392,6 +2419,37 @@ void Scene::paint_splash(Frame& f, int x, int y, int w, int h) const {
     center(ly + 8, "enter send  ·  esc interrupt  ·  ↑↓ history  ·  pgup/pgdn scroll  ·  /help", Style{th_.muted});
 }
 
+std::string Scene::entry_text(size_t i) const {
+    if (i >= entries_.size()) return {};
+    const Entry& e = entries_[i];
+    std::string o;
+    if (e.kind == Kind::Tool) {
+        o = e.name;
+        if (!e.text.empty()) o += " " + e.text;
+        if (e.resolved && !e.result.empty()) o += "\n\n" + result_facts(e.result).body;
+    } else if (e.kind == Kind::Memory) {
+        if (e.recall)
+            for (const MemoryRow& r : e.recall->rows)
+                o += (o.empty() ? "" : "\n") + ("#" + std::to_string(r.id) + " " + r.label + "  " + r.text);
+    } else {
+        o = e.text;
+    }
+    return dd::tools::sanitize_display_text(o);
+}
+
+std::optional<std::string> Scene::copy_at(int col, int row) {
+    for (const CopyHit& h : copy_hits_) {
+        if (row != h.y || col < h.x - 1 || col > h.x) continue;   // the corner and the cell inside it
+        flash_idx_ = static_cast<int>(h.idx);
+        flash_spot_ = h.spot;
+        flash_until_ = tick_ + 12;
+        if (h.spot >= 0 && h.idx < cache_.size() && static_cast<size_t>(h.spot) < cache_[h.idx].spots.size())
+            return cache_[h.idx].spots[static_cast<size_t>(h.spot)].text;
+        return entry_text(h.idx);
+    }
+    return std::nullopt;
+}
+
 void Scene::paint_transcript(Frame& f, int x, int y, int w, int h) {
     const Style b{th_.border};
     f.box(x, y, w, h, b, true);
@@ -2421,7 +2479,8 @@ void Scene::paint_transcript(Frame& f, int x, int y, int w, int h) {
                 const size_t i = todo[static_cast<size_t>(k)];
                 const Entry& e = entries_[i];
                 Cache& c = cache_[i];
-                c.block = render(e, cw);
+                c.spots.clear();
+                c.block = render(e, cw, &c.spots);
                 c.w = cw;
                 c.tw = static_cast<int>(e.text.size());
                 c.ver = e.ver;
@@ -2437,10 +2496,29 @@ void Scene::paint_transcript(Frame& f, int x, int y, int w, int h) {
     scroll_ = std::min(scroll_, std::max(0, total - ih));
     const int top = std::max(0, total - ih - scroll_);
     int acc = 0;
+    copy_hits_.clear();
     for (size_t i = 0; i < entries_.size(); ++i) {
         const int bh = hs[i];
         const int a = std::max(acc, top), z = std::min(acc + bh, top + ih);
         if (z > a) f.blit(block(i, cw), a - acc, ix, iy + (a - top), z - a);
+        // the badge sits on the card's top-right corner, painted over the frame (the cached card is untouched)
+        const auto flashed = [&](int spot) { return flash_idx_ == static_cast<int>(i) && flash_spot_ == spot && tick_ < flash_until_; };
+        if (acc >= top && acc < top + ih && cw <= iw && copyable(entries_[i].kind)) {
+            const int bx = ix + cw - 1, by = iy + (acc - top);
+            const bool hit = flashed(-1);
+            f.put(bx, by, hit ? U'✓' : kCopyGlyph, Style{hit ? th_.ok : th_.accent, kNone, kBold});
+            copy_hits_.push_back({bx, by, i, -1});
+        }
+        if (cw <= iw) {   // a code block's own badge, drawn by the card; only the hit and the check are laid here
+            const auto& spots = cache_[i].spots;
+            for (size_t k = 0; k < spots.size(); ++k) {
+                const int sy = acc + spots[k].y;
+                if (sy < top || sy >= top + ih || spots[k].x >= cw) continue;
+                const int bx = ix + spots[k].x, by = iy + (sy - top);
+                if (flashed(static_cast<int>(k))) f.put(bx, by, U'✓', Style{th_.ok, kNone, kBold});
+                copy_hits_.push_back({bx, by, i, static_cast<int>(k)});
+            }
+        }
         acc += bh;
         if (acc >= top + ih) break;
     }

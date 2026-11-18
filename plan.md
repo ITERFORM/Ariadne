@@ -104,7 +104,7 @@ not worked around:
   `fs_tools.cpp:319`, the edit path.
 
 **Still in scope, and it is a real fold:** `tools::interrupt` vs the inline cancel
-path — `src/dd_tui.cpp:205-214` (`g_sig`, `on_term`, `install_term_handlers`) and the
+path — `src/dd_tui.cpp:208-217` (`g_sig`, `on_term`, `install_term_handlers`) and the
 skipped call's own result, synthesised at `src/agent/agent.cpp:145-146`. Constraint
 found by reading, not assumed: the module holds the flag that is *current*
 (`bind`/`current`/`signal`/`clear`/`is_interrupted`, `include/dd/tools/interrupt.hpp:19-27`),
@@ -114,10 +114,10 @@ fold must keep the per-call flag, or Esc stops one command and cancels the next 
 `dd::tools::interrupt` (`include/dd/tools/interrupt.hpp:19-27`): an atomic pointer to the flag the
 running call watches — `bind`, `current`, `signal`, `clear`, `is_interrupted` — because a global bool
 would fire a turn that has not started yet. The flag itself is `Agent::interrupt_requested`, bound once
-beside the agent (`src/dd_tui.cpp:1415`); a signal reaches it from the handler at
-`src/dd_tui.cpp:205-214`, the UI's own `interrupt()` override does the same (`src/dd_tui.cpp:494`), a
-turn starts from `interrupt::clear()` (`src/dd_tui.cpp:479`), and every call in flight hands the module's
-pointer to the shell as `opt.cancel` (`src/dd_tui.cpp:232`, `src/dd_tui.cpp:248`). What the fold made
+beside the agent (`src/dd_tui.cpp:1432`); a signal reaches it from the handler at
+`src/dd_tui.cpp:208-217`, the UI's own `interrupt()` override does the same (`src/dd_tui.cpp:497`), a
+turn starts from `interrupt::clear()` (`src/dd_tui.cpp:482`), and every call in flight hands the module's
+pointer to the shell as `opt.cancel` (`src/dd_tui.cpp:235`, `src/dd_tui.cpp:249`). What the fold made
 visible: a plain signal had been setting a flag nothing read. The per-call pointer is still what the
 running command holds, which was the constraint.
 
@@ -189,10 +189,10 @@ The double level is where a run is read rather than watched. At `Verbose`:
 ## W5 — redact untrusted server text at the point it enters the prompt
 
 **Closed** by `a42b913` (ancestor of HEAD). One rule: a server's prose is masked
-where it enters the prompt, its schema is not touched. `src/dd_tui.cpp:1205`
+where it enters the prompt, its schema is not touched. `src/dd_tui.cpp:1208`
 masks the tool `description` through
 `dd::agent::mask_secret_tokens(desc->str, SecretPolicy::ServerProse)`;
-`src/dd_tui.cpp:1287` masks the server's `instructions` the same way. The
+`src/dd_tui.cpp:1290` masks the server's `instructions` the same way. The
 `inputSchema` node is deep-copied untouched (`:1105`), so names, enums and
 `required` stay byte-identical — a masked schema would make the model call things
 the server never offered. `SecretPolicy::ServerProse` deliberately drops the
@@ -288,7 +288,7 @@ moves code cannot leave a doc pointing somewhere else.
 | the README defers the unwired list to the tool | `README.md:750` | rebased 2026-10-29: `README.md` no longer carries a hand-written "Ported but not wired" list — :750 points at `make doc-audit`, which prints the measured list and rejects any name the README claims that the closure reaches. Measured today: **33 of 134** `src/*.cpp` linked into no product binary, **47 of 162** headers unreached, 16 of 35 header-only ports unreached |
 | a citation must point at the thing it describes | `citations()` | every backticked path-and-line is resolved and compared with the paragraph that cites it; an anchor whose lines share no token with the paragraph is `ANCHOR DRIFT`. Python provenance is written `py:` (10 rows in `docs/KNOWLEDGE.md`) so it is never mistaken for a repo path; runtime artifacts beside the binary (`config.yaml`, `brief.md`, `report.md`, `SKILL.md`) are excluded |
 | anchors that waves moved | `docs/PARITY.md` | rules 807-815 → 934-944; prompt voice 783-797 → 908-925; contract wiring 824-833 → 911-917; plan ledger 490, 716-742, 928-944, 1220-1249 → 527, 790-810, 1019-1032, 1177, 1338-1344; steering 1159 → 1195; the README's steering line 95 → 107; `tests/ui_test.cpp:170-173`; thresholds cite the checked-in `examples/ariadne/config.yaml:85-87`, not the generated `default_config.cpp` |
-| findings the waves falsified are marked, not left standing | `docs/KNOWLEDGE.md` F1, F4, F8, F10 | F1: retrieval fires at the turn boundary, on a rebase, and now on a steering fold (`src/context/engine.cpp:437`, `src/context/engine.cpp:498`, `src/context/engine.cpp:855`); F4: catalogues are refreshed (`src/dd_tui.cpp:1298-1309`); F8: `build_skills` keys are read (`wiring.cpp:22-29`); F10: home is beside the binary (`home.cpp:106`, `dd_agent_main.cpp:145-150`) |
+| findings the waves falsified are marked, not left standing | `docs/KNOWLEDGE.md` F1, F4, F8, F10 | F1: retrieval fires at the turn boundary, on a rebase, and now on a steering fold (`src/context/engine.cpp:437`, `src/context/engine.cpp:498`, `src/context/engine.cpp:855`); F4: catalogues are refreshed (`src/dd_tui.cpp:1301-1312`); F8: `build_skills` keys are read (`wiring.cpp:22-29`); F10: home is beside the binary (`home.cpp:106`, `dd_agent_main.cpp:145-150`) |
 
 `make doc-audit`: clean — 187 citations, 0 unresolved or drifting, 0 wiring claims.
 
@@ -302,8 +302,8 @@ so it is engineer-decidable like every other wave:
 | what | where | why it is in scope |
 |---|---|---|
 | 3 mutexes, 8 `lock_guard` sites | `src/agent/retry.cpp` (jitter counter), `src/agent/prompt_cache_boundary.cpp` (x3), `include/dd/gateway/pairing.hpp` + `src/gateway/pairing.cpp` (x4) | the only locks left anywhere, and 10d deleted them. Each was reached only by its own test binary (`tests/agent_retry_test.cpp`, `tests/agent_boundary_test.cpp`, `tests/gateway_pairing_test.cpp`) — single-threaded, so the lock guarded state no second thread reaches |
-| 5 queues | `src/context/maze.cpp:271` (`Job`), `src/context/maze.cpp:272` (`LedgerEntry`), `include/dd/know/router.hpp:140` (`opened_q_`), `include/dd/learn/sink.hpp:43` (`q_`), `include/dd/ui.hpp:504` (`Scene q_`) | Vyukov MPSC allocates one node per push and grows without bound. `Scene::llm_content` (`src/ui.cpp:1037`) posted an event per streamed delta, so a long answer was thousands of nodes and thousands of string copies on the hot path. These five lines are where each hand-off lives today: all five are `SlotRing`s |
-| 6 deques | `src/core/json.cpp:201`, `include/dd/know/working_set.hpp:80`, `include/dd/learn/episode.hpp:53`, `include/dd/ui.hpp:520`, `include/dd/ui.hpp:522`, `include/dd/ui.hpp:528` | not hand-offs — each has exactly one owning thread. They stay; each must name it |
+| 5 queues | `src/context/maze.cpp:271` (`Job`), `src/context/maze.cpp:272` (`LedgerEntry`), `include/dd/know/router.hpp:140` (`opened_q_`), `include/dd/learn/sink.hpp:43` (`q_`), `include/dd/ui.hpp:520` (`Scene q_`) | Vyukov MPSC allocates one node per push and grows without bound. `Scene::llm_content` (`src/ui.cpp:1037`) posted an event per streamed delta, so a long answer was thousands of nodes and thousands of string copies on the hot path. These five lines are where each hand-off lives today: all five are `SlotRing`s |
+| 6 deques | `src/core/json.cpp:201`, `include/dd/know/working_set.hpp:80`, `include/dd/learn/episode.hpp:53`, `include/dd/ui.hpp:536`, `include/dd/ui.hpp:538`, `include/dd/ui.hpp:544` | not hand-offs — each has exactly one owning thread. They stay; each must name it |
 | `core::park` / `unpark`, 12 sites | `src/know/catalogue.cpp`, `src/know/router.cpp`, `src/learn/sink.cpp`, `src/limbo/spawn.cpp` | a futex wait on an atomic word: no lock, nothing polls. Stays |
 | `fsx::FileLock` x3 + `Ledger::FileLock` | `src/context/maze.cpp:290`, `src/context/maze.cpp:313`, `src/context/maze.cpp:332`, `src/learn/ledger.cpp:47` | cross-process durability on the spool and the ledger, held by the kernel, not by us. Out of scope |
 
@@ -402,8 +402,8 @@ Done means the invariant is greppable: no lock, no queue, and every deque left s
   the depot bound and slot reuse.
 - `dd::limbo` — the in-process level that spawns or adopts an engine (`2b7017a`). `src/limbo/` and
   `include/dd/limbo/` are tracked, `--limbo [HOST:]PORT` is a flag of the TUI
-  (`src/dd_tui.cpp:659`), the level is constructed only when that flag is given
-  (`src/dd_tui.cpp:779`), and its three suites plus a TSan binary are in `TEST_BINS`/`TSAN_BINS`.
+  (`src/dd_tui.cpp:662`), the level is constructed only when that flag is given
+  (`src/dd_tui.cpp:782`), and its three suites plus a TSan binary are in `TEST_BINS`/`TSAN_BINS`.
   What stays outside this repository is the engine itself — the llama adaptive base and the strata
   expert-streaming machinery, planned in the limbo repo's own plan. So the scope ruling is narrower
   than it read: the harness may front an engine it was asked to run, and still never dials a socket

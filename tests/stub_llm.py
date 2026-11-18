@@ -64,6 +64,10 @@ class Handler(BaseHTTPRequestHandler):
         wants_tool = tool_mode and bool(msgs) and msgs[-1].get("role") == "user"
         first_turn = len(users) <= 1
         answer = "stub answer"
+        pieces = ["stub", " answer"]
+        if os.environ.get("DD_STUB_ANSWER_FILE"):   # a render probe: this text, streamed in small chunks
+            answer = open(os.environ["DD_STUB_ANSWER_FILE"], encoding="utf-8").read()
+            pieces = [answer[i:i + 24] for i in range(0, len(answer), 24)]
         tool_call = None
         if wants_tool and not first_turn:
             tool_call = [{
@@ -112,7 +116,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.wfile.write(b"data: [DONE]\n\n")
                 self.wfile.flush()
                 return
-            for piece in ["stub", " answer"]:
+            for piece in pieces:
                 chunk = {"choices": [{"index": 0, "delta": {"content": piece}}]}
                 self.wfile.write(b"data: " + json.dumps(chunk).encode() + b"\n\n")
                 self.wfile.flush()

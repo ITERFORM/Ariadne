@@ -70,7 +70,7 @@ SCHEMA := src/tools/schema_sanitizer.cpp
 URLSAFE := src/tools/url_safety.cpp
 OSVPARSE := src/tools/osv_package_parse.cpp
 ANSI := src/tools/ansi_strip.cpp
-UI := src/ui.cpp src/ui_simd.cpp src/ui_grammar.cpp
+UI := src/ui.cpp src/ui_simd.cpp src/ui_grammar.cpp src/ui_markdown.cpp src/clip.cpp
 NET := src/net/http.cpp $(URLSAFE)
 SERVE := src/net/server.cpp src/serve/chat_api.cpp
 GWDEV := src/gateway/crypto.cpp src/gateway/identity.cpp src/gateway/devices.cpp src/gateway/device_gateway.cpp src/gateway/relay.cpp src/gateway/cli.cpp
@@ -83,7 +83,7 @@ DOCTOR := src/doctor/stack_conf.cpp src/doctor/stack.cpp src/doctor/afe.cpp src/
 LIMBO := src/limbo/shade.cpp src/limbo/spawn.cpp src/limbo/charon.cpp src/limbo/shade_strata.cpp src/limbo/shade_llama.cpp \
          src/limbo/minos.cpp src/limbo/level.cpp src/net/http.cpp src/net/server.cpp $(CORE) $(URLSAFE)
 MCPSCHEMA := src/tools/mcp_schema_cache.cpp $(SHA256)   # the staleness key is a sha256 of the config
-MCP := src/tools/mcp_client.cpp $(URLSAFE)
+MCP := src/tools/mcp_client.cpp src/tools/slash_args.cpp src/tools/tool_help.cpp $(URLSAFE)
 DELEG := src/tools/delegation_output_schema.cpp
 PATCH := src/tools/patch_parser.cpp
 FUZZY := src/tools/fuzzy_match.cpp

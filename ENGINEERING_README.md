@@ -79,12 +79,12 @@ This is not a concept deck. The following paths are implemented in the supplied 
   structured result (`include/dd/tools/delegate_tool.hpp:36-38`, `src/tools/delegate_tool.cpp:1`).
 - **The model knows the contract.** One composed system prompt (`PromptComposer`): the
   **workflow contract** (`PromptComposer::workflow_contract` in `src/know/prompt.cpp:46`,
-  toggled by `agent.contract` at `src/dd_tui.cpp:1395-1396`) — a plan before multi-step work,
+  toggled by `agent.contract` at `src/dd_tui.cpp:1412-1413`) — a plan before multi-step work,
   facts from running not guessing, a change is done when it was run and looked at, skills are
   guidelines you read — plus the operator's text, a retrieval contract (pointers must be opened
   before acting, never guess a path or a name, live state is a command and memory is history), a
   catalogue map, and `brief.md` if there is one. A pod's own protocol text is not pasted: it is
-  offered through `mcp_servers.<name>.instructions` (`src/dd_tui.cpp:887`), which reads the
+  offered through `mcp_servers.<name>.instructions` (`src/dd_tui.cpp:890`), which reads the
   server's instructions at `src/tools/mcp_client.cpp:304` and can be set to `harness`,
   `verbatim` or `off`.
 - **Context tape:** requests reuse a stable prompt prefix within an epoch; rebases are explicit and watermark-driven.
@@ -224,7 +224,7 @@ The implementation uses fixed-slot rings, atomic ownership publication, producer
 
 `delegate_task` runs a focused task in a child agent loop instead of in the parent's context. The
 tool is the parent side of the Python harness's `delegate_task`, ported to `src/tools/delegate_tool.cpp`
-and wired into the main registry at `src/dd_tui.cpp:1322-1340`; the child is not a port — it *is*
+and wired into the main registry at `src/dd_tui.cpp:1325-1343`; the child is not a port — it *is*
 the ported `Agent::run`, executing on a fresh agent.
 
 - **Shape.** One child: `delegate_task(goal, context?, toolsets?, max_iterations?)`. A concurrent
@@ -232,7 +232,7 @@ the ported `Agent::run`, executing on a fresh agent.
   The iteration cap defaults to 50 (`include/dd/tools/delegate_tool.hpp:38`).
 - **Inheritance is explicit and short.** A child takes exactly three things from its parent: the
   wire config (copied field by field into its own transport), the shell denylist — including the
-  config's `command_denylist` extension (`src/dd_tui.cpp:1333-1335`) — and the parent's ToolGate
+  config's `command_denylist` extension (`src/dd_tui.cpp:1336-1338`) — and the parent's ToolGate
   (`src/tools/delegate_tool.cpp:253`), so a device paired without local tools cannot reach them
   through a child and a child's terminal runs under the same guarded, not-jailed shell.
 - **Everything else is the child's own.** Transcript, tool registry (the file and terminal sets,
@@ -285,6 +285,13 @@ Highlights:
 - Double-buffered `Frame` / `Widget` / `Scene` rendering.
 - UTF-8 line editing, history, bracketed paste, mouse wheel, key decoding, and terminal restoration.
 - Live reasoning cards and streamed answer cards without moving content below the live tail.
+- **Answers are laid out as markdown, natively** (`src/ui_markdown.cpp`, no library): headings, emphasis,
+  code spans, links, quotes and GitHub alerts, nested and task lists, GFM tables (box-drawn, aligned, records
+  on a card too narrow for columns) and fenced code boxed and coloured by the grammar files. A streaming tail
+  renders as what it will be, so an open fence or `**` never flickers raw.
+- **Every box's ⧉ corner copies it:** a card copies its raw text (an answer its markdown), a code block the code
+  alone. CLIPBOARD and PRIMARY both, through wl-copy/xclip/xsel and OSC 52; middle click and ctrl-v paste
+  into the prompt.
 - `/context`, `/rebase`, `/resume`, `/plan`, `/learn`, `/reasoning`, `/effort`, `/verbose`, and related REPL commands.
 - **`/verbose verbose` is the instrument.** Every call leaves a dim accounting line — `http 200
   (first 429) · 3 sends · 1.9s waited · in 4,123 (960 cached, 23%) · out 300 · epoch 7 · tape 24/24
@@ -323,8 +330,8 @@ A tool-enabled agent is a system with side effects. The boundary needs to be exp
 | Tool output | Bounded at production, with omitted bytes/lines accounted for |
 | Paths | Filesystem tools reject `..` path components |
 || Gateway commands | Identity before shape: `status`/`health` answer anyone, a session handshake authenticates through its own proof, and every other command reaches a device check before the body is read (`src/gateway/device_gateway.cpp:176`) — a caller outside the boundary gets `Unauthorized`, never the shape of the protocol. A handshake nonce is answered once: the replay set records it the moment the first answer goes out (`src/gateway/device_gateway.cpp:129-139`), so a captured handshake is refused as `replay` rather than minting a second session |
-|| Delegation | A `delegate_task` child inherits the parent's ToolGate and shell denylist (`src/tools/delegate_tool.cpp:253`, `src/dd_tui.cpp:1333-1335`) and nothing wider: it cannot register tools the parent's scope refuses, and the depth cap of 2 (`include/dd/tools/delegate_tool.hpp:37`) bounds any tree of children. The terminal a child runs is the same guarded, **not-a-sandbox** shell the parent has |
-| Vision | `view_image` reads a file and puts it on the wire as a multimodal `content` part (`src/tools/vision_tool.cpp:157` — base64 + mime sniffed from the container's head, not the extension + sha256 digest), never as raw bytes in the tool text; the fact line (path, bytes, mime, digest) stays in the text and the payload is lifted onto `Message.images` (`src/agent/agent.cpp:211` → `include/dd/core/message.hpp:23`) so token accounting, the tape and compression stay text-honest. The digest is a **recovery path, not a cache**: the message in memory still holds the payload, so a re-sent turn ships it again — a later turn that lost the text calls `view_image` on the path again. Registration is **not** gated: the tool is in the deck unconditionally (`src/dd_tui.cpp:1349`), and nothing in the tree asks a model whether it sees images — a text-only model simply never reaches for it, and if it does, the endpoint answers the refusal. A `delegate_task` child does **not** inherit it: `register_child_tools` hands children `read_file`/`write_file`/`list_dir`/`edit_file` only (`src/tools/delegate_tool.cpp:53-79`) |
+|| Delegation | A `delegate_task` child inherits the parent's ToolGate and shell denylist (`src/tools/delegate_tool.cpp:253`, `src/dd_tui.cpp:1336-1338`) and nothing wider: it cannot register tools the parent's scope refuses, and the depth cap of 2 (`include/dd/tools/delegate_tool.hpp:37`) bounds any tree of children. The terminal a child runs is the same guarded, **not-a-sandbox** shell the parent has |
+| Vision | `view_image` reads a file and puts it on the wire as a multimodal `content` part (`src/tools/vision_tool.cpp:157` — base64 + mime sniffed from the container's head, not the extension + sha256 digest), never as raw bytes in the tool text; the fact line (path, bytes, mime, digest) stays in the text and the payload is lifted onto `Message.images` (`src/agent/agent.cpp:211` → `include/dd/core/message.hpp:23`) so token accounting, the tape and compression stay text-honest. The digest is a **recovery path, not a cache**: the message in memory still holds the payload, so a re-sent turn ships it again — a later turn that lost the text calls `view_image` on the path again. Registration is **not** gated: the tool is in the deck unconditionally (`src/dd_tui.cpp:1352`), and nothing in the tree asks a model whether it sees images — a text-only model simply never reaches for it, and if it does, the endpoint answers the refusal. A `delegate_task` child does **not** inherit it: `register_child_tools` hands children `read_file`/`write_file`/`list_dir`/`edit_file` only (`src/tools/delegate_tool.cpp:53-79`) |
 || Secrets | Long key-like tokens are redacted from tool output before it re-enters the prompt |
 | Learned skills | Provenance is tracked; model-edited skills are protected from blind draft overwrite |
 
@@ -407,7 +414,7 @@ Configuration is resolved from the selected home and its `config.yaml`; see `exa
 
 ### Thinking: what a request tells the model
 
-Two transports, two vocabularies. The harness never guesses what a model's dialect is: an OpenAI-shaped request carries one field, the harness's own engine calls can carry a cap, and the chat template compiled into the server has the last word on both. The default names no cap at all — `agent.thinking_budget` is 0 from the header up (`include/dd/context/endpoint.hpp:77` holds `int thinking_budget = 0`) and a config that omits the key is left uncapped by the loader (`src/dd_tui.cpp:1180` reads `cfg.has("agent.thinking_budget")`), which is what the shipped reference does as well.
+Two transports, two vocabularies. The harness never guesses what a model's dialect is: an OpenAI-shaped request carries one field, the harness's own engine calls can carry a cap, and the chat template compiled into the server has the last word on both. The default names no cap at all — `agent.thinking_budget` is 0 from the header up (`include/dd/context/endpoint.hpp:77` holds `int thinking_budget = 0`) and a config that omits the key is left uncapped by the loader (`src/dd_tui.cpp:1183` reads `cfg.has("agent.thinking_budget")`), which is what the shipped reference does as well.
 
 | Request state | What is sent | What it does |
 |---|---|---|
@@ -417,9 +424,9 @@ Two transports, two vocabularies. The harness never guesses what a model's diale
 | `agent.thinking_budget: N > 0` | `reasoning_budget_tokens: N` plus an instruction message, on engine calls only | caps one thinking field; a `/v1` upstream never sees it |
 | `agent.thinking_budget: 0` — the default | nothing | no cap: the template decides the thinking length |
 
-- A request that asked for no level sends no thinking field at all: `HttpLLM` sets `reasoning_effort` only when the effort callback returns a non-empty string (`src/agent/http_llm.cpp:260`), and `off` itself goes out as the string `"none"`, which llama-server and Strata read as thinking disabled (`src/dd_tui.cpp:114`). The ladder `/effort` and `/reasoning` walk is `off low medium high xhigh max ultra` (`src/dd_tui.cpp:116`).
-- A request offers only what this model implements: `Endpoint::efforts()` returns the levels the chat template the server reported actually has (`src/context/endpoint.cpp:184`), and a level above that ceiling steps down through the `offered` check (`src/dd_tui.cpp:1190` uses `efforts` and `kEfforts`) until the boot note names the level that is running.
-- A cap is never named for a request that did not choose a level — the shape callback is gated on `effort > 0` (`src/dd_tui.cpp:1364` calls `ep.shape` with `effort.load(...) > 0`), so neither no-preference nor `off` invites the model to think. Where a cap is named, `Endpoint::shape` writes `reasoning_budget_tokens` on engine calls (`src/context/endpoint.cpp:179`) and returns early for a remote API, which gets the OpenAI fields only (`src/context/endpoint.cpp:173-174`).
+- A request that asked for no level sends no thinking field at all: `HttpLLM` sets `reasoning_effort` only when the effort callback returns a non-empty string (`src/agent/http_llm.cpp:260`), and `off` itself goes out as the string `"none"`, which llama-server and Strata read as thinking disabled (`src/dd_tui.cpp:117`). The ladder `/effort` and `/reasoning` walk is `off low medium high xhigh max ultra` (`src/dd_tui.cpp:119`).
+- A request offers only what this model implements: `Endpoint::efforts()` returns the levels the chat template the server reported actually has (`src/context/endpoint.cpp:184`), and a level above that ceiling steps down through the `offered` check (`src/dd_tui.cpp:1207` uses `efforts` and `kEfforts`) until the boot note names the level that is running.
+- A cap is never named for a request that did not choose a level — the shape callback is gated on `effort > 0` (`src/dd_tui.cpp:1367` calls `ep.shape` with `effort.load(...) > 0`), so neither no-preference nor `off` invites the model to think. Where a cap is named, `Endpoint::shape` writes `reasoning_budget_tokens` on engine calls (`src/context/endpoint.cpp:179`) and returns early for a remote API, which gets the OpenAI fields only (`src/context/endpoint.cpp:173-174`).
 
 ### One model, many providers: what a request says about which one answers
 
@@ -433,7 +440,7 @@ A model's id is not a server. A `/v1` upstream serves one model through several 
 | `model.extra.provider.only: [baidu/fp8]` | `{"provider":{"only":["baidu/fp8"]}}` | that provider answers; the response's `provider` field is the proof, not our inference |
 | `model.extra.provider.allow_fallbacks: false` | `false`, not a dropped key | a provider other than the one asked for is an error |
 
-- `model.extra` has no default: `src/dd_tui.cpp:1352` copies it into `HttpLLM::extra` (`include/dd/agent/http_llm.hpp`) and an unset key sends nothing, which is how a local `llama-server` stays untouched by a field it has never seen.
+- `model.extra` has no default: `src/dd_tui.cpp:1355` copies it into `HttpLLM::extra` (`include/dd/agent/http_llm.hpp`) and an unset key sends nothing, which is how a local `llama-server` stays untouched by a field it has never seen.
 - The contract is checked on the bytes `HttpLLM::body` builds, not on an upstream's answer: `tests/agent_wire_retry_test.cpp` asserts the merged provider object reaches the wire and that an `extra` key named `model` loses to the model we chose.
 - `provider` is the one shape this key exists for today, not a second vocabulary; the key is one word for any field a `/v1` endpoint reads and this client has none of, and today only provider routing needs it. Today: a `base_url` that is a real provider's `/v1` is the only setup that can use it.
 

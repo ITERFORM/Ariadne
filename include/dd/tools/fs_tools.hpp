@@ -30,6 +30,11 @@ std::string fs_list(const core::Json& args, const FsLimits& limits = {});
 std::string fs_read_raw(const std::string& path, std::size_t cap, std::string& err);
 // The OpenAI-style schema of a tool with these string properties (plus the optional `intent`).
 core::Json fs_tool_schema(const std::vector<std::string>& props, const std::string& desc);
+// The file tools as the model sees them, one definition for the TUI, the headless agent and sub-agents: what each
+// is for, what it refuses, what it returns, and every parameter in its own words.
+core::Json read_file_schema();
+core::Json write_file_schema();
+core::Json list_dir_schema();
 
 }  // namespace tools
 }  // namespace dd

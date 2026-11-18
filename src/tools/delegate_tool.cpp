@@ -59,17 +59,17 @@ void register_child_tools(ToolRegistry& reg, const ChildToolDeps& d) {
     if (d.wanted("file")) {
         e.name = "read_file";
         e.toolset = "file";
-        e.schema = fs_tool_schema({"path"}, "Read a file's UTF-8 text content.");
+        e.schema = read_file_schema();
         e.handler = [](const Json& a) { return fs_read(a); };
         reg.register_tool(e);
 
         e.name = "write_file";
-        e.schema = fs_tool_schema({"path", "content"}, "Write text content to a file.");
+        e.schema = write_file_schema();
         e.handler = [](const Json& a) { return fs_write(a); };
         reg.register_tool(e);
 
         e.name = "list_dir";
-        e.schema = fs_tool_schema({"path"}, "List entries of a directory.");
+        e.schema = list_dir_schema();
         e.handler = [](const Json& a) { return fs_list(a); };
         reg.register_tool(e);
 

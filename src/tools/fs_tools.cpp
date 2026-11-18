@@ -346,5 +346,53 @@ Json fs_tool_schema(const std::vector<std::string>& props, const std::string& de
                      {"parameters", jsp(std::move(parameters))}});
 }
 
+namespace {
+
+Json param(const char* type, const std::string& desc) {
+    return json_obj({{"type", jsp(json_str(type))}, {"description", jsp(json_str(desc))}});
+}
+
+Json tool_schema(const std::string& desc, Json props, const std::vector<std::string>& required) {
+    obj_set(props, "intent", param("string", "what you are doing, in a few words (optional)"));
+    Json req = json_arr();
+    for (const auto& r : required) arr_push(req, json_str(r));
+    Json parameters = json_obj({{"type", jsp(json_str("object"))},
+                                {"properties", jsp(std::move(props))},
+                                {"required", jsp(std::move(req))}});
+    return json_obj({{"description", jsp(json_str(desc))}, {"parameters", jsp(std::move(parameters))}});
+}
+
+}  // namespace
+
+Json read_file_schema() {
+    return tool_schema(
+        "Read a text file as numbered lines (\"     N|text\"). Long files: page with offset (first line, 1-based) and "
+        "limit (lines). Read a file before changing it; list_dir shows what a folder holds.",
+        json_obj({{"path", jsp(param("string", "the file to read"))},
+                  {"offset", jsp(param("integer", "first line to return, 1-based"))},
+                  {"limit", jsp(param("integer", "how many lines to return"))}}),
+        {"path"});
+}
+
+Json write_file_schema() {
+    return tool_schema(
+        "Create a file, or replace one whole, with exactly `content`. The write is atomic (a temp file renamed over "
+        "the target) and keeps an existing file's permissions; the parent folder must already exist, and a path "
+        "containing '..' is refused. To change part of a file use edit_file: write_file rewrites all of it. Returns "
+        "the path and the bytes written.",
+        json_obj({{"path", jsp(param("string", "the file to create or replace; its folder must exist"))},
+                  {"content", jsp(param("string", "the complete new text of the file"))}}),
+        {"path", "content"});
+}
+
+Json list_dir_schema() {
+    return tool_schema(
+        "List one folder, one level deep and sorted: sub-folders end with '/'. Without a path it lists the current "
+        "folder; a long listing is cut and says so (truncated, total). It shows what a folder holds; it does not "
+        "search inside files.",
+        json_obj({{"path", jsp(param("string", "the folder to list (default: the current folder)"))}}),
+        {});
+}
+
 }  // namespace tools
 }  // namespace dd

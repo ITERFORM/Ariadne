@@ -15,12 +15,12 @@ namespace dd {
 namespace ui {
 
 enum class K { Char, Paste, Enter, Backspace, Delete, Left, Right, WordLeft, WordRight, Up, Down, Home, End,
-               PgUp, PgDn, WheelUp, WheelDown, Tab, Esc, CtrlC, CtrlD, CtrlK, CtrlL, CtrlU, CtrlW };
+               PgUp, PgDn, WheelUp, WheelDown, Click, MiddleClick, Tab, Esc, CtrlC, CtrlD, CtrlK, CtrlL, CtrlU, CtrlV, CtrlW };
 
 struct Key {
     K k;
     std::u32string text;
-    int x = -1, y = -1;   // a wheel's cell, 0-based; -1 when the terminal did not say
+    int x = -1, y = -1;   // a wheel's or click's cell, 0-based; -1 when the terminal did not say
 };
 
 class KeyReader {
@@ -82,6 +82,8 @@ public:
                         }
                         if (fin == 'M' && b == 64) out.push_back(Key{K::WheelUp, {}, cx, cy});
                         if (fin == 'M' && b == 65) out.push_back(Key{K::WheelDown, {}, cx, cy});
+                        if (fin == 'M' && b == 0) out.push_back(Key{K::Click, {}, cx, cy});   // left press; the release is ignored
+                        if (fin == 'M' && b == 1) out.push_back(Key{K::MiddleClick, {}, cx, cy});   // mouse reporting keeps it from the terminal's own paste
                         continue;
                     }
                     const bool ctrl = par.find(";5") != std::string::npos;
@@ -142,6 +144,7 @@ public:
                 case 0x0e: key(K::Down); break;
                 case 0x10: key(K::Up); break;
                 case 0x15: key(K::CtrlU); break;
+                case 0x16: key(K::CtrlV); break;
                 case 0x17: key(K::CtrlW); break;
                 default: break;
                 }

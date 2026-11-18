@@ -1,6 +1,7 @@
 // dd::ui — kernels vs scalar on every SIMD level the CPU has, the slot ring under
 // contention, text metrics, frame diffing, layout geometry.
 #include "dd/ui.hpp"
+#include "dd/ui_markdown.hpp"
 #include "dd/ui_simd.hpp"
 
 #ifdef _OPENMP
@@ -1689,6 +1690,222 @@ int main() {
             return s.text.find("imported target") != std::string::npos;
         });
         chk(done, "the row past the directive word is still on the card");
+    }
+
+    // ---- the copy badge: a click on a card's corner copies its raw text, not the screen cells ----
+    {
+        Scene s{Theme{}};
+        const std::string long_line(300, 'w');   // wraps on every width: the copy must not
+        s.user("first\nsecond " + long_line);
+        s.say("answer line one\nanswer line two\n\x1b[31mred\x1b[0m");
+        s.error("boom");
+        s.note("just a note");
+        std::string esc, plain;   // 100 result rows, newline-escaped for the JSON body
+        for (int i = 0; i < 100; ++i) {
+            esc += "row" + std::to_string(i) + "\\n";
+            plain += "row" + std::to_string(i) + "\n";
+        }
+        s.tool_call("c1", "run_terminal", "{\"cmd\":\"ls\"}");
+        s.tool_result("c1", "{\"cmd\":\"ls\",\"exit\":0,\"stdout\":\"" + esc + "\"}");
+        const int cols = 160, rows = 80;
+        s.present(cols, rows, false);
+        // one badge per copyable card, none on the note
+        std::vector<int> badge_rows;
+        for (int y = 0; y < rows; ++y)
+            if (s.row_text(y).find("⧉") != std::string::npos) badge_rows.push_back(y);
+        chk(badge_rows.size() == 4, "badge: user, say, error and tool cards each carry one (" + std::to_string(badge_rows.size()) + ")");
+        const auto col_of = [&](int y) {   // the glyph's column (row_text is UTF-8: count codepoints)
+            const std::string r = s.row_text(y);
+            const size_t b = r.find("⧉");
+            int c = 0;
+            for (size_t i = 0; i < b; ++i)
+                if ((static_cast<unsigned char>(r[i]) & 0xC0) != 0x80) ++c;
+            return c;
+        };
+        if (badge_rows.size() == 4) {
+            const auto user = s.copy_at(col_of(badge_rows[0]), badge_rows[0]);
+            chk(user && *user == "first\nsecond " + long_line, "badge: a user card copies its prompt unwrapped");
+            const auto say = s.copy_at(col_of(badge_rows[1]), badge_rows[1]);
+            chk(say && *say == "answer line one\nanswer line two\nred", "badge: an answer copies without borders, escapes stripped");
+            const auto err = s.copy_at(col_of(badge_rows[2]), badge_rows[2]);
+            chk(err && *err == "boom", "badge: an error card copies its message");
+            const auto tool = s.copy_at(col_of(badge_rows[3]), badge_rows[3]);
+            chk(tool && tool->rfind("run_terminal ", 0) == 0 && tool->find("row99") != std::string::npos,
+                "badge: a tool card copies the name, the args and the whole result, not the clipped view");
+            chk(tool && tool->find("row0\nrow1\n") != std::string::npos && tool->find("┤") == std::string::npos &&
+                    tool->find("│") == std::string::npos,
+                "badge: the copy has no border glyphs and keeps the result's lines");
+            // the corner is one cell wide; the cell inside it counts, other cells on the title row do not
+            chk(s.copy_at(col_of(badge_rows[2]) - 1, badge_rows[2]).has_value(), "badge: the cell inside the corner is part of the target");
+            chk(!s.copy_at(col_of(badge_rows[2]) - 4, badge_rows[2]).has_value(), "badge: elsewhere on the title row copies nothing");
+            chk(!s.copy_at(col_of(badge_rows[2]), badge_rows[2] + 1).has_value(), "badge: a click on the body copies nothing");
+            // feedback: the badge shows a check right after the copy
+            (void)s.copy_at(col_of(badge_rows[2]), badge_rows[2]);
+            s.present(cols, rows, false);
+            chk(s.row_text(badge_rows[2]).find("✓") != std::string::npos, "badge: it shows a check right after the copy");
+        }
+        chk(!s.copy_at(0, 0).has_value(), "badge: the frame's corner is not a badge");
+        chk(s.entry_text(9999).empty(), "badge: a stale index copies nothing");
+    }
+    {   // only cards whose first row is on screen carry a badge
+        Scene s{Theme{}};
+        for (int i = 0; i < 60; ++i) s.say("answer " + std::to_string(i));
+        s.present(120, 30, false);
+        size_t n = 0;
+        for (int y = 0; y < 30; ++y)
+            if (s.row_text(y).find("⧉") != std::string::npos) ++n;
+        chk(n > 0 && n < 30, "badge: only the visible cards carry one (" + std::to_string(n) + ")");
+    }
+
+    // ---- markdown: an answer laid out, not printed raw ----
+    {
+        const Theme th;
+        const auto rows = [](const MdOut& o) {
+            std::vector<std::string> r;
+            for (int y = 0; y < o.canvas.h(); ++y) r.push_back(o.canvas.row_text(y));
+            return r;
+        };
+        const auto cell_of = [](const MdOut& o, int y, char32_t ch) -> const Cell* {   // the first cell holding ch
+            for (int x = 0; x < o.canvas.w(); ++x)
+                if (o.canvas.at(x, y).ch == ch) return &o.canvas.at(x, y);
+            return nullptr;
+        };
+        const auto md = [&](const std::string& s, int w = 60, bool stream = false, int cap = 0) {
+            return render_markdown(s, w, th, nullptr, stream, cap);
+        };
+        const auto boxrow = [](const std::string& t, int inner) {   // a code row inside its box
+            return "│ " + t + std::string(static_cast<size_t>(inner - text_width(t)), ' ') + " │";
+        };
+
+        {   // headings: no hashes; h1 carries a full rule, h2 a rule under its text
+            const MdOut o = md("# Title\nbody\n\n## Sub\nmore", 40);
+            const auto r = rows(o);
+            chk(r.size() >= 6 && r[0] == "Title", "md: an h1 shows its text without the hashes");
+            chk(r[1].size() == 40 * std::string("━").size() && r[1].find_first_not_of("━") == std::string::npos, "md: an h1 is ruled full width");
+            const Cell* t = cell_of(o, 0, U'T');
+            chk(t && (t->st.at & kBold) && t->st.fg == th.gold, "md: an h1 is bold gold");
+            chk(r[2] == "body", "md: the heading sits on its text");
+            chk(r[4] == "Sub" && r[5] == "───", "md: an h2 is underlined as wide as its text");
+        }
+        {   // inline: markers gone, styles on the cells
+            const MdOut o = md("a **b** *c* ~~d~~ `e` ***f***");
+            chk(rows(o)[0] == "a b c d e f", "md: emphasis, strikethrough and code spans lose their markers");
+            chk(cell_of(o, 0, U'b')->st.at & kBold, "md: **b** is bold");
+            chk(cell_of(o, 0, U'c')->st.at & kItalic, "md: *c* is italic");
+            chk(cell_of(o, 0, U'd')->st.at & kStrike, "md: ~~d~~ is struck through");
+            chk(cell_of(o, 0, U'e')->st.bg == th.select_bg && cell_of(o, 0, U'e')->st.fg == th.code_ty, "md: `e` reads as code");
+            chk((cell_of(o, 0, U'f')->st.at & (kBold | kItalic)) == (kBold | kItalic), "md: ***f*** is bold and italic");
+        }
+        chk(rows(md("snake_case_name and 2 * 3 * 4 and a_b_"))[0] == "snake_case_name and 2 * 3 * 4 and a_b_",
+            "md: an underscore inside a word and a spaced * stay literal");
+        chk(rows(md("\\*not\\* \\`x\\` a\\_b"))[0] == "*not* `x` a_b", "md: escapes print the character");
+        chk(rows(md("a &amp; b &lt;c&gt; &#x41;&#66; &bogus;"))[0] == "a & b <c> AB &bogus;", "md: entities decode, unknown ones stay");
+        chk(rows(md("**see `a*b` here**"))[0] == "see a*b here", "md: a closer inside a code span is literal");
+        {
+            const MdOut o = md("[docs](https://x.y/z \"t\") and https://a.b/c. done");
+            chk(rows(o)[0] == "docs (https://x.y/z) and https://a.b/c. done", "md: a link shows its url; a bare url is a link");
+            chk(cell_of(o, 0, U'd')->st.at & kUnder, "md: link text is underlined");
+            const std::string r0 = rows(o)[0];
+            const size_t dot = r0.find("c. done") + 1;
+            chk(!(o.canvas.at(static_cast<int>(dot), 0).st.at & kUnder), "md: the sentence's full stop is not part of the url");
+        }
+        {   // lists: markers, nesting, hanging indent, numbers aligned, tasks
+            const auto r = rows(md("- one\n- two that wraps past the edge\n  - nested\n\n9. nine\n10. ten\n\n- [x] done\n- [ ] todo", 20));
+            chk(r[0] == "• one", "md: a bullet");
+            chk(r[1] == "• two that wraps" && r[2] == "  past the edge", "md: a wrapped item hangs under its text");
+            chk(r[3] == "  ◦ nested", "md: a nested list takes the next bullet");
+            chk(r[5] == " 9. nine" && r[6] == "10. ten", "md: numbers right-align and keep their start");
+            chk(r[8] == "☑ done" && r[9] == "☐ todo", "md: task items show their box");
+        }
+        {   // quotes and alerts
+            const MdOut o = md("> quoted **bold**\n> second\n\n> [!WARNING]\n> careful");
+            const auto r = rows(o);
+            chk(r[0] == "▎ quoted bold" && r[1] == "▎ second", "md: a quote carries its bar on every row");
+            chk(cell_of(o, 0, U'q')->st.at & kItalic, "md: quoted prose is italic");
+            chk(r[3] == "▎ ▲ Warning" && r[4] == "▎ careful", "md: a GitHub alert names itself");
+            chk(cell_of(o, 3, U'▎')->st.fg == th.warn, "md: the alert's bar wears its colour");
+        }
+        {   // tables: borders, alignment, header style, widths inside the card
+            const MdOut o = md("| a | b |\n|:-|-:|\n| x | long cell |\n| yy | z |", 40);
+            const auto r = rows(o);
+            chk(r.size() == 6 && r[0] == "╭────┬───────────╮" && r[2] == "├────┼───────────┤" && r[5] == "╰────┴───────────╯",
+                "md: a table is boxed to its columns");
+            chk(r[1] == "│ a  │         b │" && r[3] == "│ x  │ long cell │" && r[4] == "│ yy │         z │",
+                "md: cells pad to their column, right-aligned where the delimiter says");
+            chk(cell_of(o, 1, U'a')->st.fg == th.gold && (cell_of(o, 1, U'a')->st.at & kBold), "md: the head is bold gold");
+            chk(rows(md("| a | b |\n├───┼───┤\n| 1 | 2 |"))[0] == "╭───┬───╮", "md: a delimiter drawn in box glyphs is still a table");
+            const auto narrow = rows(md("| head one | head two |\n|---|---|\n| alpha beta gamma | delta epsilon |", 16));
+            chk(narrow[0] == "head one: alpha" && narrow[1] == "beta gamma", "md: a table with no room becomes records");
+            chk(rows(md("| a \\| b | `c|d` |\n|---|---|\n| 1 | 2 |"))[1] == "│ a | b │ c|d │", "md: an escaped pipe and a pipe in code stay in their cell");
+        }
+        {   // fenced code: boxed, titled, its own badge, copies the code without the fence
+            const MdOut o = md("Run:\n\n```python\ndef f():\n    return 1\n```\nafter", 30);
+            const auto r = rows(o);
+            chk(r[2].find("python") != std::string::npos && r[2].rfind("╭", 0) == 0, "md: a fence is a box titled with its language");
+            chk(o.canvas.at(29, 2).ch == kCopyGlyph, "md: the box carries a copy badge on its corner");
+            chk(r[3] == boxrow("def f():", 26) && r[4] == boxrow("    return 1", 26), "md: code keeps its indentation inside the box");
+            chk(o.spots.size() == 1 && o.spots[0].x == 29 && o.spots[0].y == 2 && o.spots[0].text == "def f():\n    return 1",
+                "md: the badge copies the code alone");
+            chk(r[6] == "" && r[7] == "after", "md: prose resumes under the box");
+            const MdOut li = md("- step:\n  ```sh\n  echo hi\n  ```", 30);
+            chk(li.spots.size() == 1 && li.spots[0].x == 29 && li.spots[0].y == 1 && li.spots[0].text == "echo hi",
+                "md: a fence inside a list item keeps its badge on its own corner");
+            chk(rows(li)[1].rfind("  ╭", 0) == 0, "md: the box hangs under the item's text");
+            const MdOut wide = md("```\n" + std::string(40, 'x') + "\n```", 20);
+            chk(rows(wide)[1] == boxrow(std::string(16, 'x'), 16) && rows(wide)[2].find("↪") != std::string::npos,
+                "md: a long code row continues with a mark");
+            chk(wide.spots[0].text == std::string(40, 'x'), "md: the copy keeps the real line, not the cut");
+        }
+        {   // streaming: an unclosed tail renders as what it will be
+            const MdOut live = md("so **bold", 40, true);
+            chk(rows(live)[0] == "so bold" && (cell_of(live, 0, U'b')->st.at & kBold), "md: a streaming ** styles the rest");
+            chk(rows(md("so **bold", 40, false))[0] == "so **bold", "md: a finished unclosed ** is literal");
+            const auto open = rows(md("```bash\necho hi", 30, true));
+            chk(open.size() == 3 && open[1] == boxrow("echo hi", 26), "md: a fence still open shows its box");
+        }
+        {   // the cap keeps the first rows and says it cut
+            const MdOut o = md("a\nb\nc\nd\ne", 20, true, 3);
+            chk(rows(o).size() == 3 && rows(o)[2] == "…" && o.hidden == 3, "md: max_rows keeps the head and an ellipsis");
+        }
+        chk(rows(md("Title\n===\ntext"))[0] == "Title" && rows(md("Title\n===\ntext"))[2] == "text", "md: a setext heading");
+        chk(rows(md("above\n\n---\n\nbelow", 10))[2] == "──────────", "md: a rule spans the width");
+        chk(rows(md("a<br>b <kbd>Ctrl</kbd> 1 < 2"))[1] == "b Ctrl 1 < 2", "md: <br> breaks, known tags drop, a lone < stays");
+        {   // every width, every block: nothing escapes the canvas
+            std::string all = "# H\n\npara **b** `c` [l](u)\n\n> q\n\n- a\n  - b\n1. c\n\n| x | y |\n|---|--:|\n| 1 | 2 |\n\n```c\nint x;\n```\n\n---\n";
+            bool ok = true;
+            for (int w = 1; w <= 120 && ok; ++w) {
+                const MdOut o = md(all, w);
+                for (int y = 0; y < o.canvas.h(); ++y) ok = ok && text_width(o.canvas.row_text(y)) <= w;
+                for (const CopySpot& s : o.spots) ok = ok && s.x < w && s.y < o.canvas.h();
+            }
+            chk(ok, "md: every width from 1 to 120 keeps every row and badge inside the canvas");
+        }
+    }
+    {   // the scene: a code block's badge copies the code; the card's corner still copies the whole markdown
+        Scene s{Theme{}};
+        const std::string answer = "Run this:\n\n```bash\necho one\necho two\n```";
+        s.say(answer);
+        const int cols = 140, rows_n = 40;
+        s.present(cols, rows_n, false);
+        std::vector<std::pair<int, int>> badges;   // (row, col) of every badge on screen
+        for (int y = 0; y < rows_n; ++y) {
+            const std::string r = s.row_text(y);
+            int col = 0;
+            for (size_t i = 0; i < r.size(); ++i) {
+                if ((static_cast<unsigned char>(r[i]) & 0xC0) == 0x80) continue;
+                if (r.compare(i, std::strlen("⧉"), "⧉") == 0) badges.push_back({y, col});
+                ++col;
+            }
+        }
+        chk(badges.size() == 2, "scene: the answer card and its code block each carry a badge (" + std::to_string(badges.size()) + ")");
+        if (badges.size() == 2) {
+            const auto card = s.copy_at(badges[0].second, badges[0].first);
+            const auto code = s.copy_at(badges[1].second, badges[1].first);
+            chk(card && *card == answer, "scene: the card's corner copies the raw markdown");
+            chk(code && *code == "echo one\necho two", "scene: the code block's corner copies the code alone");
+            s.present(cols, rows_n, false);
+            chk(s.row_text(badges[1].first).find("✓") != std::string::npos, "scene: the code badge shows the check after its copy");
+        }
     }
 
     if (g_fail) std::printf("%d FAILED\n", g_fail);

@@ -33,6 +33,8 @@ static std::string name(const Key& k) {
     case K::PgDn: return "PgDn";
     case K::WheelUp: return "WheelUp";
     case K::WheelDown: return "WheelDown";
+    case K::Click: return "Click";
+    case K::MiddleClick: return "MiddleClick";
     case K::Tab: return "Tab";
     case K::Esc: return "Esc";
     case K::CtrlC: return "CtrlC";
@@ -40,6 +42,7 @@ static std::string name(const Key& k) {
     case K::CtrlK: return "CtrlK";
     case K::CtrlL: return "CtrlL";
     case K::CtrlU: return "CtrlU";
+    case K::CtrlV: return "CtrlV";
     case K::CtrlW: return "CtrlW";
     }
     return "?";
@@ -92,7 +95,10 @@ int main() {
     all_splits("\x1b[5~\x1b[6~", "PgUp PgDn ");
     all_splits("\x1b[<64;10;5M", "WheelUp ");
     all_splits("\x1b[<65;120;45M", "WheelDown ");
-    all_splits("\x1b[<0;10;5M\x1b[<0;10;5m", "");   // a click and its release say nothing
+    all_splits("\x1b[<0;10;5M\x1b[<0;10;5m", "Click ");   // the press is the click; its release says nothing
+    all_splits("\x1b[<2;10;5M\x1b[<2;10;5m", "");   // other buttons say nothing
+    all_splits("\x1b[<1;10;5M\x1b[<1;10;5m", "MiddleClick ");   // the middle press pastes; mouse reporting keeps it from the terminal
+    all_splits("\x16", "CtrlV ");   // raw mode hands ctrl-v over as a byte: the TUI pastes itself
     all_splits("\x1bOA", "Up ");
     all_splits("\x1bOH", "Home ");
     all_splits("\x1b[200~hello\r\nworld\x1b[201~", "Paste:hello\nworld ");
@@ -123,6 +129,12 @@ int main() {
         const std::string bare = "\x1b[<64M";
         const auto k2 = r.feed(bare.data(), bare.size());
         chk(k2.size() == 1 && k2[0].k == K::WheelUp && k2[0].x == -1 && k2[0].y == -1, "a wheel without a cell says -1, not 0");
+    }
+    {
+        KeyReader kr;
+        const std::string m = "\x1b[<0;10;5M";
+        const auto ks = kr.feed(m.data(), m.size());
+        chk(ks.size() == 1 && ks[0].k == K::Click && ks[0].x == 9 && ks[0].y == 4, "a click carries its 0-based cell");
     }
     chk(run({"\x1b"}) == "Esc ", "ESC with silence is Esc");
     chk(run({"a\x1b"}) == "Char:a Esc ", "text then a lone ESC");
