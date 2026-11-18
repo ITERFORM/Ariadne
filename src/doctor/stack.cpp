@@ -166,13 +166,20 @@ bool pid_alive(pid_t pid) {
     return proc_state(pid).rfind('Z', 0) != 0;
 }
 
+std::string probe_addr(const std::string& host) {
+    return (host.empty() || host == "0.0.0.0" || host == "::" || host == "[::]") ? "127.0.0.1" : host;
+}
+
+// A server bound to 0.0.0.0 was probed there, the net client refused the address, and every
+// probe failed: start waited out its timeout on a loaded model, and "never two models" did
+// not see a server already on the port.
 bool port_up(const std::string& host, int port, long timeout_ms) {
-    const net::Response r = net::get("http://" + host + ":" + std::to_string(port) + "/health", timeout_ms, 4096);
+    const net::Response r = net::get("http://" + probe_addr(host) + ":" + std::to_string(port) + "/health", timeout_ms, 4096);
     return r.error.empty() && r.status > 0;
 }
 
 bool health_ok(const std::string& host, int port, long timeout_ms) {
-    const net::Response r = net::get("http://" + host + ":" + std::to_string(port) + "/health", timeout_ms, 4096);
+    const net::Response r = net::get("http://" + probe_addr(host) + ":" + std::to_string(port) + "/health", timeout_ms, 4096);
     return r.error.empty() && r.status == 200;
 }
 
@@ -448,6 +455,14 @@ std::vector<std::string> Stack::main_argv(const StackConf& c, const std::string&
     return a;
 }
 
+long a3b_threads(const StackConf& c, int physical) {
+    // Not MAIN_THREADS: the dense profile runs on the card and a desktop conf held 1 there,
+    // which a3b inherited -- 18 layers of experts decoding on one thread. Measured on a 4060 Ti
+    // box: 4/8/12 threads gave the same prefill and decode, 16 fought the GPU.
+    if (const long t = c.integer("A3B_THREADS", 0); t > 0) return t;
+    return std::clamp(physical / 2, 4, 12);
+}
+
 std::vector<std::string> Stack::a3b_argv(const StackConf& c, const std::string& model) const {
     const long slots = c.integer("MAIN_SLOTS", 1);
     std::vector<std::string> a = {
@@ -458,7 +473,7 @@ std::vector<std::string> Stack::a3b_argv(const StackConf& c, const std::string& 
         "-ngl", std::to_string(c.integer("MAIN_NGL", 99)),
         "--n-cpu-moe", std::to_string(c.integer("A3B_N_CPU_MOE", 0)),
         // offloaded expert layers are CPU work on every token: they run on these threads
-        "-t", std::to_string(c.integer("A3B_THREADS", c.integer("MAIN_THREADS", 8))),
+        "-t", std::to_string(a3b_threads(c, machine_physical_cores())),
         "-np", std::to_string(slots),
         "-b", std::to_string(c.integer("A3B_BATCH", 2048)), "-ub", std::to_string(c.integer("A3B_UBATCH", 2048)),
         "--temp", "1.0", "--top-k", "20", "--min-p", "0.00", "--top-p", "0.95",
@@ -971,7 +986,7 @@ double sample_decode_rate(const std::map<std::string, double>& prev, const std::
 
 namespace {
 std::map<std::string, double> scrape(const std::string& host, int port) {
-    const net::Response r = net::get("http://" + host + ":" + std::to_string(port) + "/metrics", 3000);
+    const net::Response r = net::get("http://" + probe_addr(host) + ":" + std::to_string(port) + "/metrics", 3000);
     return r.ok() ? parse_metrics(r.body) : std::map<std::string, double>{};
 }
 std::string fmt1(double v) { char b[32]; std::snprintf(b, sizeof b, "%.1f", v); return b; }

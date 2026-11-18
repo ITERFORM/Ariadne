@@ -666,7 +666,7 @@ int cmd_bench(const Stack& s, const Options& o) {
     } else {
         const auto [host, p] = c.host_port("main");
         port = p;
-        base = "http://" + host + ":" + std::to_string(port);
+        base = "http://" + probe_addr(host) + ":" + std::to_string(port);
         profile = o.profile;
         if (profile.empty()) profile = s.running_profile();
         if (profile.empty()) profile = s.default_profile(c);

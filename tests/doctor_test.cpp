@@ -1,8 +1,13 @@
 // tests/doctor_test.cpp — `ariadne doctor`: stack.conf, model lookup, launch lines, processes,
 // and mazemaker's AFE wake protocol. No GPU, no model: what is asserted is the doctor's own
 // reasoning, and a `sleep` stands in for a server where a process is needed.
+#include <arpa/inet.h>
 #include <csignal>
 #include <cstdio>
+#include <cstring>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <unistd.h>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -211,6 +216,44 @@ int main() {
         "llm-on-demand.failed names every reason");
     chk(fs::exists(afe::last_used_file()), "last-used stamped on wake");
     chk(afe::cmd_idle_check(stack) == 0, "idle-check with nothing running is a no-op");
+
+    // ---- probing a server bound to 0.0.0.0 -----------------------------------------------------
+    chk(probe_addr("0.0.0.0") == "127.0.0.1" && probe_addr("::") == "127.0.0.1" && probe_addr("") == "127.0.0.1",
+        "bind addresses are probed on loopback");
+    chk(probe_addr("192.168.0.5") == "192.168.0.5" && probe_addr("127.0.0.1") == "127.0.0.1", "a real address is kept");
+    {
+        // A desktop conf binds main on 0.0.0.0; the net client refuses that address, so every
+        // probe failed and start waited out its timeout on a model that was up.
+        const int lfd = ::socket(AF_INET, SOCK_STREAM, 0);
+        sockaddr_in sa{};
+        sa.sin_family = AF_INET;
+        sa.sin_addr.s_addr = htonl(INADDR_ANY);
+        sa.sin_port = 0;
+        const int one = 1;
+        ::setsockopt(lfd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof one);
+        const bool bound = ::bind(lfd, reinterpret_cast<sockaddr*>(&sa), sizeof sa) == 0 && ::listen(lfd, 4) == 0;
+        socklen_t len = sizeof sa;
+        ::getsockname(lfd, reinterpret_cast<sockaddr*>(&sa), &len);
+        const int port = ntohs(sa.sin_port);
+        std::thread srv([lfd] {
+            for (int i = 0; i < 2; ++i) {
+                const int c = ::accept(lfd, nullptr, nullptr);
+                if (c < 0) return;
+                char buf[1024];
+                (void)::read(c, buf, sizeof buf);
+                const char* resp = "HTTP/1.0 200 OK\r\nContent-Length: 2\r\n\r\nok";
+                (void)::write(c, resp, std::strlen(resp));
+                ::close(c);
+            }
+        });
+        chk(bound && health_ok("0.0.0.0", port, 3000), "health of a server bound to 0.0.0.0 is seen");
+        chk(port_up("0.0.0.0", port, 3000), "port_up of a server bound to 0.0.0.0 is seen");
+        srv.join();
+        ::close(lfd);
+    }
+    chk(a3b_threads(StackConf(Values{{"MAIN_THREADS", "1"}}), 16) == 8, "a3b ignores MAIN_THREADS=1: 16 cores -> 8");
+    chk(a3b_threads(StackConf(Values{}), 4) == 4 && a3b_threads(StackConf(Values{}), 64) == 12, "a3b threads within 4..12");
+    chk(a3b_threads(StackConf(Values{{"A3B_THREADS", "6"}}), 16) == 6, "A3B_THREADS wins when set");
 
     // ---- bench --------------------------------------------------------------------------------
     using namespace dd::doctor::bench;

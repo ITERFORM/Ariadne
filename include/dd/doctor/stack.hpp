@@ -104,6 +104,9 @@ private:
     Out out_;
 };
 
+// Where to reach a server bound to `host`: 0.0.0.0, :: and "" are bind addresses, not
+// destinations (and the net client refuses them), so they are probed on 127.0.0.1.
+std::string probe_addr(const std::string& host);
 bool pid_alive(pid_t pid);
 std::string proc_state(pid_t pid);
 // Any HTTP answer at all (a loading llama-server answers 503).
@@ -112,6 +115,8 @@ bool port_up(const std::string& host, int port, long timeout_ms = 2000);
 bool health_ok(const std::string& host, int port, long timeout_ms = 2000);
 // Physical cores of this machine (/proc/cpuinfo).
 int machine_physical_cores();
+// Threads for the a3b profile: A3B_THREADS, else half the physical cores within 4..12.
+long a3b_threads(const StackConf& c, int physical);
 
 // llama-server's /metrics, `llamacpp:` counters without labels.
 std::map<std::string, double> parse_metrics(const std::string& body);
