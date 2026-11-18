@@ -114,10 +114,10 @@ fold must keep the per-call flag, or Esc stops one command and cancels the next 
 `dd::tools::interrupt` (`include/dd/tools/interrupt.hpp:19-27`): an atomic pointer to the flag the
 running call watches — `bind`, `current`, `signal`, `clear`, `is_interrupted` — because a global bool
 would fire a turn that has not started yet. The flag itself is `Agent::interrupt_requested`, bound once
-beside the agent (`src/dd_tui.cpp:1399`); a signal reaches it from the handler at
-`src/dd_tui.cpp:205-214`, the UI's own `interrupt()` override does the same (`src/dd_tui.cpp:479`), a
+beside the agent (`src/dd_tui.cpp:1400`); a signal reaches it from the handler at
+`src/dd_tui.cpp:206-215`, the UI's own `interrupt()` override does the same (`src/dd_tui.cpp:480`), a
 turn starts from `interrupt::clear()` (`src/dd_tui.cpp:463`), and every call in flight hands the module's
-pointer to the shell as `opt.cancel` (`src/dd_tui.cpp:231`, `src/dd_tui.cpp:247`). What the fold made
+pointer to the shell as `opt.cancel` (`src/dd_tui.cpp:232`, `src/dd_tui.cpp:248`). What the fold made
 visible: a plain signal had been setting a flag nothing read. The per-call pointer is still what the
 running command holds, which was the constraint.
 
@@ -189,10 +189,10 @@ The double level is where a run is read rather than watched. At `Verbose`:
 ## W5 — redact untrusted server text at the point it enters the prompt
 
 **Closed** by `a42b913` (ancestor of HEAD). One rule: a server's prose is masked
-where it enters the prompt, its schema is not touched. `src/dd_tui.cpp:1188`
+where it enters the prompt, its schema is not touched. `src/dd_tui.cpp:1189`
 masks the tool `description` through
 `dd::agent::mask_secret_tokens(desc->str, SecretPolicy::ServerProse)`;
-`src/dd_tui.cpp:1271` masks the server's `instructions` the same way. The
+`src/dd_tui.cpp:1272` masks the server's `instructions` the same way. The
 `inputSchema` node is deep-copied untouched (`:1105`), so names, enums and
 `required` stay byte-identical — a masked schema would make the model call things
 the server never offered. `SecretPolicy::ServerProse` deliberately drops the
@@ -402,7 +402,7 @@ Done means the invariant is greppable: no lock, no queue, and every deque left s
   the depot bound and slot reuse.
 - `dd::limbo` — the in-process level that spawns or adopts an engine (`2b7017a`). `src/limbo/` and
   `include/dd/limbo/` are tracked, `--limbo [HOST:]PORT` is a flag of the TUI
-  (`src/dd_tui.cpp:644`), the level is constructed only when that flag is given
+  (`src/dd_tui.cpp:645`), the level is constructed only when that flag is given
   (`src/dd_tui.cpp:762`), and its three suites plus a TSan binary are in `TEST_BINS`/`TSAN_BINS`.
   What stays outside this repository is the engine itself — the llama adaptive base and the strata
   expert-streaming machinery, planned in the limbo repo's own plan. So the scope ruling is narrower

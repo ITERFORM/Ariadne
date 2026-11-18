@@ -97,7 +97,7 @@ Asserted in `tests/ui_test.cpp` through `Scene::row_text`; seen live with
 
 ### Mid-turn steering — closed
 Input typed while a turn runs is folded into that turn instead of waiting for it to end. What was
-typed mid-turn lands in a `core::SlotRing<16>` (`src/dd_tui.cpp:1906`) and `Agent::steer_hook`
+typed mid-turn lands in a `core::SlotRing<16>` (`src/dd_tui.cpp:1907`) and `Agent::steer_hook`
 (`src/dd_tui.cpp:1958`) claims it with `claim_all()` — the payloads it pinned, oldest stamp first, so a
 prompt typed earlier enters earlier however the slots wrapped. Overflow is held in a list the key handler
 owns alone, and once anything is held everything typed after it waits too. The
@@ -232,7 +232,7 @@ the next replay is measured against; the budgets (`knowledge.budget.*`) are the 
 
 The three seams the ledger above claims, as shipped objects. The highlight seam is what the Rust grammar table
 becomes: roots are read once at startup and the pointers travel through the paint chain, so a render pass parses
-nothing (`src/dd_tui.cpp:1291`, `include/dd/ui.hpp:218`, `include/dd/ui.hpp:253`). The hand-off seam is the same
+nothing (`src/dd_tui.cpp:1292`, `include/dd/ui.hpp:218`, `include/dd/ui.hpp:253`). The hand-off seam is the same
 object at both ends — a lock-free ring whose capacity is its ceiling (`include/dd/core/slot_ring.hpp:75-108`).
 
 ```mermaid

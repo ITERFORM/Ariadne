@@ -60,6 +60,7 @@
 #include "dd/context/plan.hpp"
 #include "dd/tools/todo_tool.hpp"
 #include "dd/tools/mcp.hpp"
+#include "dd/tools/slash_args.hpp"
 #include "dd/tools/mcp_schema_cache.hpp"
 #include "dd/tools/shell.hpp"
 #include "dd/tools/url_safety.hpp"
@@ -2069,11 +2070,23 @@ int main(int argc, char** argv) {
             scene.error(sv.cmd + " " + tool + ": DD_NO_SOAK: this run writes nothing to the maze");
             return;
         }
-        bool repaired = false;
-        Json ja = dd::core::json_parse_args(args.empty() ? "{}" : args, repaired);
-        if (ja.type != dd::core::Json::Obj && !args.empty())
-            ja = json_obj({{"query", jsp(json_str(args))}});  // a bare word: the usual one-arg shape
-        if (ja.type != dd::core::Json::Obj) ja = json_obj();
+        // Words and --flags fill the tool's own properties: its manifest says what they are called and typed.
+        Json ja = json_obj();
+        if (!args.empty()) {
+            Json tl;
+            const Json* schema = nullptr;
+            if (args.find_first_not_of(" \t") != std::string::npos && args[args.find_first_not_of(" \t")] != '{') {
+                tl = m->list_tools();
+                if (tl.type == Json::Arr)
+                    for (const auto& tsp : tl.arr)
+                        if (tsp && tsp->type == Json::Obj)
+                            if (const Json* nm = json_get(*tsp, "name"); nm && nm->type == Json::Str && nm->str == wire) {
+                                schema = json_get(*tsp, "inputSchema");
+                                break;
+                            }
+            }
+            ja = dd::tools::slash_args(args, schema);
+        }
         std::string shown = m->call(wire, ja);
         bool failed = false;
         try {   // a failed call comes back as {"error": ...}

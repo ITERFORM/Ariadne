@@ -82,7 +82,7 @@ CONTEXT := src/context/tape.cpp src/context/render.cpp src/context/endpoint.cpp 
 LIMBO := src/limbo/shade.cpp src/limbo/spawn.cpp src/limbo/charon.cpp src/limbo/shade_strata.cpp src/limbo/shade_llama.cpp \
          src/limbo/minos.cpp src/limbo/level.cpp src/net/http.cpp src/net/server.cpp $(CORE) $(URLSAFE)
 MCPSCHEMA := src/tools/mcp_schema_cache.cpp $(SHA256)   # the staleness key is a sha256 of the config
-MCP := src/tools/mcp_client.cpp $(URLSAFE)
+MCP := src/tools/mcp_client.cpp src/tools/slash_args.cpp $(URLSAFE)
 DELEG := src/tools/delegation_output_schema.cpp
 PATCH := src/tools/patch_parser.cpp
 FUZZY := src/tools/fuzzy_match.cpp

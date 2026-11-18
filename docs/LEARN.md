@@ -61,7 +61,7 @@ All in `namespace dd::learn`, `include/dd/learn/`, `src/learn/`. Depends on `kno
 `EventSink` and `Overlay` interfaces, never on `learn` (dependency rule `learn -> know -> mem -> core`).
 
 The graph as shipped. `LearnService` is the only object the composition root constructs
-(`include/dd/learn/service.hpp:52`, `src/dd_tui.cpp:1450`); everything else is private to it, and the two
+(`include/dd/learn/service.hpp:52`, `src/dd_tui.cpp:1451`); everything else is private to it, and the two
 interfaces it implements are `know`'s, not its own (`include/dd/learn/sink.hpp:24`,
 `include/dd/learn/overlay.hpp:27`).
 
@@ -300,10 +300,10 @@ is refused, not starved, so the curator no longer pushes a hub up while its own 
   (`include/dd/learn/service.hpp:43`), enforced against a day-stamped counter in
   `LearnService::author_now()` (`src/learn/service.cpp:105-109`) — so the cap is per calendar day and resets
   on the first draft after midnight. The kill switches are read at construction: `learn.enabled`
-  (`src/dd_tui.cpp:1344`) decides whether the service starts at all, and an empty `<home>/learn/OFF` file stops
+  (`src/dd_tui.cpp:1345`) decides whether the service starts at all, and an empty `<home>/learn/OFF` file stops
   it before the ledger is opened (`src/learn/service.cpp:14-16`); `learn.feedback` (`src/dd_tui.cpp:1388`)
   decides whether the curator runs (`src/learn/service.cpp:141-144`); `learn.author` (`src/dd_tui.cpp:1436`)
-  decides whether drafting is allowed and is **opt-in**, unlike `learn.govern` (`src/dd_tui.cpp:1438`). The
+  decides whether drafting is allowed and is **opt-in**, unlike `learn.govern` (`src/dd_tui.cpp:1439`). The
   other two caps — 40 learned skills, one sidekick call in flight — do not exist in the code: nothing counts
   learned skills and nothing calls a model.
 
