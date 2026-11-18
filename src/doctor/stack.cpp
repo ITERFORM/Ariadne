@@ -698,8 +698,10 @@ int Stack::cmd_setup() const {
         std::vector<std::string> cfg = {"cmake", "-S", c.llama_dir().string(), "-B", (c.llama_dir() / "build").string(),
                                         "-DCMAKE_BUILD_TYPE=Release"};
         if (cuda) cfg.insert(cfg.end(), {"-DGGML_CUDA=ON", "-DGGML_CUDA_FA_ALL_QUANTS=ON"});
+        // A bare -j is unbounded: on a 4-core, 6 GiB machine it swapped the box unresponsive.
+        const unsigned jobs = std::max(1u, std::thread::hardware_concurrency());
         if (run(cfg) != 0 || run({"cmake", "--build", (c.llama_dir() / "build").string(), "--config", "Release",
-                                  "--target", "llama-server", "-j"}) != 0) {
+                                  "--target", "llama-server", "-j", std::to_string(jobs)}) != 0) {
             out_.bad("build failed");
             return 1;
         }
