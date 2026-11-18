@@ -85,6 +85,14 @@ bool set_typed(Json& out, const std::string& key, const std::string& type, const
         dd::core::obj_set(out, key, dd::core::json_bool(b == 1));
         return true;
     }
+    if (type == "object") {   // --args '{"q": "x"}': JSON, typed as such
+        if (raw.empty() || raw.front() != '{') return false;
+        bool repaired = false;
+        Json o = dd::core::json_parse_args(raw, repaired);
+        if (o.type != Json::Obj) return false;
+        dd::core::obj_set(out, key, o);
+        return true;
+    }
     if (type == "array") {   // a,b,c
         Json a = dd::core::json_arr();
         size_t i = 0;

@@ -66,6 +66,13 @@ int main() {
     }
     chk(boolean(dd::tools::slash_args("x --wurm false", &schema), "wurm") == 0, "--wurm false reads the word");
     chk(str(dd::tools::slash_args("don't panic", &schema), "topic") == "don't panic", "an apostrophe inside a word is a letter");
+    {   // an object parameter takes JSON
+        const Json call = dd::core::json_parse(R"({"type":"object","properties":{"tool":{"type":"string"},"args":{"type":"object"}},"required":["tool","args"]})");
+        const Json a = dd::tools::slash_args("web.render --args '{\"url\": \"https://example.org\"}'", &call);
+        const Json* args = dd::core::json_get(a, "args");
+        chk(str(a, "tool") == "web.render" && args && args->type == Json::Obj && str(*args, "url") == "https://example.org",
+            "--args '{...}' is an object");
+    }
     {   // JSON passes through untouched
         const Json a = dd::tools::slash_args(R"({"topic": "as typed", "n": 3})", &schema);
         chk(str(a, "topic") == "as typed" && num(a, "n") == 3, "a JSON object passes through");

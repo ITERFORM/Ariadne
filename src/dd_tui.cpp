@@ -61,6 +61,7 @@
 #include "dd/tools/todo_tool.hpp"
 #include "dd/tools/mcp.hpp"
 #include "dd/tools/slash_args.hpp"
+#include "dd/tools/tool_help.hpp"
 #include "dd/tools/mcp_schema_cache.hpp"
 #include "dd/tools/shell.hpp"
 #include "dd/tools/url_safety.hpp"
@@ -1047,8 +1048,8 @@ int main(int argc, char** argv) {
         e.handler = h_read_file;
         add_tool(e);
     }
-    { ToolEntry e; e.name = "write_file"; e.schema = dd::tools::fs_tool_schema({"path", "content"}, "Write text content to a file."); e.handler = h_write_file; add_tool(e); }
-    { ToolEntry e; e.name = "list_dir"; e.schema = dd::tools::fs_tool_schema({"path"}, "List entries of a directory."); e.handler = h_list_dir; add_tool(e); }
+    { ToolEntry e; e.name = "write_file"; e.schema = dd::tools::write_file_schema(); e.handler = h_write_file; add_tool(e); }
+    { ToolEntry e; e.name = "list_dir"; e.schema = dd::tools::list_dir_schema(); e.handler = h_list_dir; add_tool(e); }
     {
         ToolEntry e;
         e.name = "edit_file";
@@ -2047,22 +2048,50 @@ int main(int argc, char** argv) {
             scene.error("server " + sv.cmd + " went down since boot");
             return;
         }
-        if (tool.empty()) {
-            const Json tl = m->list_tools();
-            std::string names;
-            int n = 0;
+        // What each tool is for and how to call it, from the live manifest: the server's own words, masked as the
+        // prompt masks them. Bare names told the operator nothing about what a tool does.
+        const auto docs_of = [&](const Json& tl) {
+            std::vector<dd::tools::ToolDoc> out;
+            const std::string prefix = sv.cmd.substr(1) + "_";
             if (tl.type == Json::Arr)
                 for (const auto& tsp : tl.arr)
                     if (tsp && tsp->type == Json::Obj)
                         if (const Json* nm = json_get(*tsp, "name"); nm && nm->type == Json::Str) {
-                            names += (names.empty() ? "" : ", ") + nm->str;
-                            ++n;
+                            dd::tools::ToolDoc d;
+                            d.wire = nm->str;
+                            d.name = nm->str.rfind(prefix, 0) == 0 && nm->str.size() > prefix.size() ? nm->str.substr(prefix.size()) : nm->str;
+                            d.toolset = sv.srvname;
+                            if (const Json* ds = json_get(*tsp, "description"); ds && ds->type == Json::Str)
+                                d.description = dd::agent::mask_secret_tokens(ds->str, dd::agent::SecretPolicy::ServerProse);
+                            d.params = json_get(*tsp, "inputSchema");
+                            out.push_back(std::move(d));
                         }
+            return out;
+        };
+        const std::string targs = trim_ws(args);
+        std::string help_for;   // "/pulse research --help", "/pulse help research"
+        if (!tool.empty() && (targs == "--help" || targs == "-h" || targs == "help")) help_for = tool;
+        else if (tool == "help" || tool == "--help") help_for = targs.empty() ? std::string(" ") : targs;
+        if (tool.empty() || help_for == " ") {
+            const Json tl = m->list_tools();
             if (tl.type == Json::Arr)   // the freshest manifest there is, keyed by the config that produced it
                 dd::tools::write_cache_entry(schema_cache_file, sv.srvname, sv.fp, tl, json_arr());
-            scene.note(sv.cmd + " · " + std::to_string(n) + " tools" +
-                       (sv.from_cache ? " · boot read them from cache, this list refreshed it" : "") +
-                       ":\n  " + names);
+            const auto docs = docs_of(tl);
+            scene.doc(sv.cmd, dd::tools::tools_index_md(sv.cmd + " · " + std::to_string(docs.size()) + " tools", docs, sv.cmd) +
+                                  "\n`" + sv.cmd + " <tool> --help` shows every parameter. Words fill the tool's first required "
+                                  "field; `--name value` sets any other; a JSON object is passed as typed." +
+                                  (sv.from_cache ? " Boot read this server's tools from cache; this list refreshed it." : ""));
+            return;
+        }
+        if (!help_for.empty()) {
+            const Json tl = m->list_tools();
+            const std::string want = sv.wire.count(help_for) ? help_for : sv.cmd.substr(1) + "_" + help_for;
+            for (const auto& d : docs_of(tl))
+                if (d.wire == want || d.name == help_for) {
+                    scene.doc(sv.cmd + " " + d.name, dd::tools::tool_detail_md(d, sv.cmd));
+                    return;
+                }
+            scene.error(sv.cmd + ": no tool named " + help_for + " · " + sv.cmd + " lists them");
             return;
         }
         const std::string wire = sv.wire.count(tool) ? tool : sv.cmd.substr(1) + "_" + tool;   // a bare alias -> its wire name
@@ -2130,7 +2159,7 @@ int main(int argc, char** argv) {
             } else if (cmd == "/help") {
                 scene.note("enter send · esc / ctrl-c interrupt · ↑↓ history · ctrl-←→ words · pgup/pgdn or wheel scroll (over the tools box: that list) · "
                            "ctrl-l redraw · tab completes · click ⧉ on a box's corner copies its text · ctrl-v or middle-click pastes (DD_TUI_MOUSE=0 gives the terminal its own mouse back)\n/effort off|low|…  /reasoning <effort>|show|full|hide  /verbose quiet|normal|full  /context  /rebase  "
-                           "/resume  /retry (ask the last question again)  /tools  /turns N  /plan  /clear (new session)  /learn  /mcp  /<server>  /interrupt  /quit\\n"
+                           "/resume  /retry (ask the last question again)  /tools [name] (what each tool is for)  /turns N  /plan  /clear (new session)  /learn  /mcp  /<server> [tool] [--help]  /interrupt  /quit\\n"
                            "/verbose quiet|normal|full (the deck AND the log)  /log off|error|warn|info|debug|full (the file alone; bare: level, path, counts)");
             } else if (cmd == "/learn") {
                 if (learn_pin) run_cmd("learn", [&] {
@@ -2139,9 +2168,54 @@ int main(int argc, char** argv) {
                 });
                 else scene.note("learning is off");
             } else if (cmd == "/tools") {
-                std::string all;
-                for (const auto& n : reg.get_all_tool_names()) all += (all.empty() ? "" : "  ") + n;
-                scene.note(std::to_string(tool_count) + " tools: " + all);
+                // What every tool is for, read off the schema the model sees; /tools <name> shows one whole.
+                const std::string want = trim_ws(p.substr(cmd.size()));
+                std::map<std::string, std::vector<dd::tools::ToolDoc>> groups;   // toolset -> its tools
+                for (const auto& n : reg.get_all_tool_names()) {
+                    const Json* sch = reg.get_schema(n);
+                    dd::tools::ToolDoc d;
+                    d.name = d.wire = n;
+                    const std::string ts = reg.get_toolset_for_tool(n);
+                    d.toolset = ts.empty() ? "built-in" : ts;
+                    if (const Json* ds = sch ? json_get(*sch, "description") : nullptr; ds && ds->type == Json::Str) d.description = ds->str;
+                    d.params = sch ? json_get(*sch, "parameters") : nullptr;
+                    groups[d.toolset].push_back(std::move(d));
+                }
+                if (!want.empty()) {
+                    const dd::tools::ToolDoc* hit = nullptr;
+                    for (const auto& [ts, docs] : groups)
+                        for (const auto& d : docs)
+                            if (d.wire == want || (ts != "built-in" && d.wire == ts + "_" + want)) hit = &d;
+                    if (!hit) {
+                        scene.note("no tool named " + want + " · /tools lists them");
+                    } else {
+                        dd::tools::ToolDoc d = *hit;
+                        std::string slash;   // an MCP tool also runs from the input line: show its slash form
+                        if (d.toolset != "built-in") {
+                            for (const auto& sv : cmd_servs)
+                                if (sv.srvname == d.toolset) slash = sv.cmd;
+                            if (!slash.empty() && d.wire.rfind(slash.substr(1) + "_", 0) == 0)
+                                d.name = d.wire.substr(slash.size());
+                        }
+                        scene.doc("/tools " + want, dd::tools::tool_detail_md(d, slash));
+                    }
+                } else {
+                    std::string md = "**" + std::to_string(tool_count) + " tools.** `/tools <name>` shows one whole; "
+                                     "`/<server>` lists a server's tools with how to call them from here.\n\n";
+                    const auto section = [&](const std::string& ts) {
+                        const auto it = groups.find(ts);
+                        if (it == groups.end()) return;
+                        std::string title = ts + " · " + std::to_string(it->second.size());
+                        if (ts != "built-in")
+                            for (const auto& sv : cmd_servs)
+                                if (sv.srvname == ts) title += " · " + sv.cmd;
+                        md += dd::tools::tools_index_md(title, it->second, "") + "\n";
+                    };
+                    section("built-in");
+                    for (const auto& [ts, docs] : groups)
+                        if (ts != "built-in") section(ts);
+                    scene.doc("/tools", md);
+                }
             } else if (cmd == "/verbose" || cmd == "/log") {
                 // One word for the operator, two surfaces for the machine. /verbose is the display
                 // AND the file's level, because that is what an operator means by "verbose full";

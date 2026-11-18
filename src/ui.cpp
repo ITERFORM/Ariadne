@@ -1020,6 +1020,13 @@ void Scene::set_max_turns(int n) {
 
 void Scene::user(const std::string& text) { Event e; e.ev = Ev::User; e.a = text; post(std::move(e)); }
 void Scene::say(const std::string& text) { Event e; e.ev = Ev::Say; e.a = text; post(std::move(e)); }
+void Scene::doc(const std::string& title, const std::string& markdown) {
+    Event e;
+    e.ev = Ev::Say;
+    e.a = markdown;
+    e.b = title.empty() ? std::string("help") : title;
+    post(std::move(e));
+}
 void Scene::note(const std::string& text) { Event e; e.ev = Ev::Note; e.a = text; post(std::move(e)); }
 void Scene::recalled(const RecallView& v) {
     Event e;
@@ -1661,7 +1668,8 @@ void Scene::apply(Event& e) {
         break;
     case Ev::Say: {
         Entry& t = push(Kind::Say, e.a);
-        t.ms = last_.latency_ms;
+        t.name = e.b;                            // a doc card's title; an answer has none
+        t.ms = e.b.empty() ? last_.latency_ms : 0;
         t.resolved = true;
         break;
     }
@@ -2069,7 +2077,7 @@ Canvas Scene::render(const Entry& e, int w, std::vector<CopySpot>* spots) const 
             c.box(0, 0, w, h - 1, b, true);
             c.put(2, 0, U'┤', b);
             c.put(3, 0, U' ', b);
-            const int n = c.gradient(4, 0, th_.response_label, th_.title, th_.hot, th_.gold, kBold);
+            const int n = c.gradient(4, 0, e.name.empty() ? th_.response_label : e.name, th_.title, th_.hot, th_.gold, kBold);
             c.put(4 + n, 0, U' ', b);
             c.put(5 + n, 0, U'├', b);
             if (e.ms > 0) c.title_right(w - 2, 0, fmt_ms(e.ms), Style{th_.muted}, b);

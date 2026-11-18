@@ -420,6 +420,8 @@ public:
     void set_max_turns(int n);
     void user(const std::string& text);
     void say(const std::string& text);
+    // A help page: markdown on an answer card titled `title` (/tools, /<server>); copyable like any answer.
+    void doc(const std::string& title, const std::string& markdown);
     void tool_call(const std::string& id, const std::string& name, const std::string& args);
     uint64_t tool_begin(const std::string& name);   // binds to the first pending call of that name
     void tool_end(uint64_t token, double ms, bool ok);

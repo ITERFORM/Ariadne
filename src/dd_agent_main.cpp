@@ -51,11 +51,10 @@ static size_t g_shell_max_output = 8000;      // ditto; the shipped default unti
 static std::string h_read_file(const Json& args) { return dd::tools::fs_read(args, g_fs_limits); }
 static std::string h_write_file(const Json& args) { return dd::tools::fs_write(args); }
 static std::string h_list_dir(const Json& args) { return dd::tools::fs_list(args, g_fs_limits); }
-static ddcore::Json fs_schema(const std::vector<std::string>& props, const std::string& desc) { return dd::tools::fs_tool_schema(props, desc); }
 static void register_fs_tools(dd::tools::ToolRegistry& reg) {
-    { ToolEntry e; e.name = "read_file"; e.schema = fs_schema({"path"}, "Read a file's UTF-8 text content."); e.handler = h_read_file; reg.register_tool(e); }
-    { ToolEntry e; e.name = "write_file"; e.schema = fs_schema({"path","content"}, "Write text content to a file."); e.handler = h_write_file; reg.register_tool(e); }
-    { ToolEntry e; e.name = "list_dir"; e.schema = fs_schema({"path"}, "List entries of a directory."); e.handler = h_list_dir; reg.register_tool(e); }
+    { ToolEntry e; e.name = "read_file"; e.schema = dd::tools::read_file_schema(); e.handler = h_read_file; reg.register_tool(e); }
+    { ToolEntry e; e.name = "write_file"; e.schema = dd::tools::write_file_schema(); e.handler = h_write_file; reg.register_tool(e); }
+    { ToolEntry e; e.name = "list_dir"; e.schema = dd::tools::list_dir_schema(); e.handler = h_list_dir; reg.register_tool(e); }
 }
 
 // ---- entry ----
