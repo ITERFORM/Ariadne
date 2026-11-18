@@ -105,6 +105,7 @@ int run(const std::vector<std::string>& argv, const std::string& cwd) {
         if (!cwd.empty() && ::chdir(cwd.c_str()) != 0) ::_exit(127);
         auto a = c_argv(argv);
         ::execvp(a[0], a.data());
+        std::fprintf(stderr, "  could not run %s: %s\n", a[0], std::strerror(errno));
         ::_exit(127);
     }
     int status = 0;
@@ -668,6 +669,18 @@ int Stack::cmd_setup() const {
 
     out_.section("llama.cpp (adaptive KV streaming)");
     std::error_code ec;
+    // A missing tool is named before anything runs, never discovered as a bare "build failed".
+    const bool built = ::access(c.server().c_str(), X_OK) == 0;
+    std::vector<std::string> missing;
+    if (!fs::is_directory(c.llama_dir() / ".git", ec) && which("git").empty()) missing.push_back("git");
+    if (!built && which("cmake").empty()) missing.push_back("cmake");
+    if (!built && which("c++").empty() && which("g++").empty() && which("clang++").empty()) missing.push_back("a C++ compiler (g++)");
+    if (!missing.empty()) {
+        std::string list;
+        for (const auto& m : missing) list += (list.empty() ? "" : ", ") + m;
+        out_.bad("cannot build llama.cpp", "— missing: " + list + "; install it and rerun: ariadne doctor setup");
+        return 1;
+    }
     if (!fs::is_directory(c.llama_dir() / ".git", ec)) {
         fs::create_directories(c.llama_dir().parent_path(), ec);
         if (run({"git", "clone", "--branch", c.str("LLAMA_BRANCH", "feature/adaptive-kv-stream"),

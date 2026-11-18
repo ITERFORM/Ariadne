@@ -6,6 +6,7 @@
 #include <unistd.h>
 
 #include "dd/doctor/afe.hpp"
+#include "dd/doctor/bench.hpp"
 #include "dd/doctor/stack.hpp"
 
 namespace dd {
@@ -28,6 +29,9 @@ void doctor_usage(bool to_stderr) {
         "  watch [--threshold N] [--interval S] [--trips N] [--cooldown S]\n"
         "                    restart main when generation throughput collapses\n"
         "  logs [main|aux|vis|afe] [-n N] [--no-follow]\n"
+        "  bench [profile] [--url URL] [--runs N] [--clients N] [--long] [--think] [--quick]\n"
+        "        [--no-start] [--keep] [--out DIR] [--compare DIR]\n"
+        "                    measure the model: decode, prefill, TTFT, cache reuse, VRAM\n"
         "  afe [status|fetch|start|stop|wake|idle-check]\n"
         "                    mazemaker's AFE model on :8888, never beside the stack\n"
         "\n"
@@ -105,6 +109,32 @@ int run_doctor(const std::vector<std::string>& args, const std::filesystem::path
             }
         }
         return s.cmd_logs(server, lines, follow);
+    }
+    if (cmd == "bench") {
+        bench::Options o;
+        for (size_t i = 1; i < args.size(); ++i) {
+            const std::string& a = args[i];
+            auto val = [&]() -> const std::string* { return i + 1 < args.size() ? &args[++i] : nullptr; };
+            if (a == "--long") o.long_ = true;
+            else if (a == "--think") o.think = true;
+            else if (a == "--quick") o.quick = true;
+            else if (a == "--no-start") o.no_start = true;
+            else if (a == "--keep") o.keep = true;
+            else if (a == "--url" || a == "--runs" || a == "--clients" || a == "--out" || a == "--compare") {
+                const std::string* v = val();
+                if (!v) return bad_args(a + " needs a value");
+                if (a == "--url") o.url = *v;
+                else if (a == "--runs") o.runs = std::atoi(v->c_str());
+                else if (a == "--clients") o.clients = std::atoi(v->c_str());
+                else if (a == "--out") o.out = *v;
+                else o.compare = *v;
+            } else if (valid_profile(a)) {
+                o.profile = a;
+            } else {
+                return bad_args("unknown bench argument " + a);
+            }
+        }
+        return bench::cmd_bench(s, o);
     }
     if (cmd == "afe") {
         if (arg1.empty() || arg1 == "status") return afe::cmd_status(s);

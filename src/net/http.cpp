@@ -163,10 +163,11 @@ Response post(const std::string& url, const std::string& json_body, long timeout
 }
 
 Response post_stream(const std::string& url, const std::string& json_body, long timeout_ms,
-                     const std::atomic<bool>* cancel, const std::function<bool(std::string_view)>& on_chunk) {
+                     const std::atomic<bool>* cancel, const std::function<bool(std::string_view)>& on_chunk,
+                     const std::vector<std::string>& headers) {
     StreamSink stream{on_chunk};
     // max_bytes 0: nothing is buffered, so no body ceiling applies.
-    Response r = perform(url, &json_body, timeout_ms, cancel, 0, &stream);
+    Response r = perform(url, &json_body, timeout_ms, cancel, 0, &stream, headers.empty() ? nullptr : &headers);
     if (stream.stop && r.error.empty()) r.ended_early = true;
     return r;
 }

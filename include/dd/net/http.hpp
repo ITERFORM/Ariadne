@@ -48,7 +48,8 @@ Response post(const std::string& url, const std::string& json_body, long timeout
 // and a stream that produces nothing for that long is a dead server.
 Response post_stream(const std::string& url, const std::string& json_body, long timeout_ms,
                     const std::atomic<bool>* cancel,
-                    const std::function<bool(std::string_view)>& on_chunk);
+                    const std::function<bool(std::string_view)>& on_chunk,
+                    const std::vector<std::string>& headers = {});
 
 }  // namespace net
 }  // namespace dd

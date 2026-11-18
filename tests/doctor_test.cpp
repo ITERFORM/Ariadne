@@ -10,7 +10,10 @@
 #include <thread>
 #include <vector>
 
+#include <optional>
+
 #include "dd/doctor/afe.hpp"
+#include "dd/doctor/bench.hpp"
 #include "dd/doctor/stack.hpp"
 #include "dd/doctor/stack_conf.hpp"
 
@@ -208,6 +211,58 @@ int main() {
         "llm-on-demand.failed names every reason");
     chk(fs::exists(afe::last_used_file()), "last-used stamped on wake");
     chk(afe::cmd_idle_check(stack) == 0, "idle-check with nothing running is a no-op");
+
+    // ---- bench --------------------------------------------------------------------------------
+    using namespace dd::doctor::bench;
+    const std::string p1 = long_prompt(500, 7), p2 = long_prompt(500, 984);
+    chk(p1 == long_prompt(500, 7), "a prompt is reproducible from its salt");
+    chk(p1 != p2, "every run's salt makes a new prompt (no cache help)");
+    {
+        const auto list = p1.substr(p1.find('\n') + 1, p1.find("\n\n") - p1.find('\n') - 1);
+        size_t words = 1;
+        for (char ch : list) words += ch == ' ' ? 1 : 0;
+        chk(words == 500 && p1.rfind("Run 7: ", 0) == 0, "the prompt holds the asked number of words");
+    }
+    {
+        const std::string fc = file_chunk(2, 1200);
+        size_t lines = 1;
+        for (char ch : fc) lines += ch == '\n' ? 1 : 0;
+        chk(lines == 100 && fc == file_chunk(2, 1200) && fc != file_chunk(3, 1200), "file chunk: 1200 words -> 100 lines, per turn");
+    }
+
+    ChatResult cr;
+    chk(sse_event(R"({"choices":[{"delta":{"role":"assistant"}}]})", 0.1, cr) && cr.first < 0, "an empty delta is no token");
+    sse_event(R"({"choices":[{"delta":{"reasoning_content":"hm"}}]})", 0.5, cr);
+    chk(cr.first == 0.5 && cr.pieces == 1 && cr.text.empty(), "reasoning counts as the first token, not as text");
+    sse_event(R"({"choices":[{"delta":{"content":"Hi"}}]})", 0.6, cr);
+    sse_event(R"({"choices":[{"delta":{"tool_calls":[{"function":{"name":"read_file"}}]}}]})", 0.7, cr);
+    chk(cr.text == "Hi" && cr.pieces == 3, "content is the text; a tool call is produced output too");
+    sse_event(R"({"choices":[],"timings":{"prompt_n":90,"cache_n":10,"prompt_per_second":500.5,"predicted_per_second":42.0,"draft_n":20,"draft_n_accepted":15}})", 0.8, cr);
+    chk(!sse_event("[DONE]", 0.9, cr), "[DONE] ends the stream");
+    chk(sse_event("not json", 1.0, cr), "a broken line is skipped, not fatal");
+    cr.total = 2.0;
+    const Digest dg = digest(cr);
+    chk(dg.ok && dg.prompt_tokens && *dg.prompt_tokens == 100 && *dg.read_tokens == 90 && *dg.reused_tokens == 10,
+        "usage null on a stream: prompt = prompt_n + cache_n");
+    chk(dg.decode_tps && *dg.decode_tps == 42.0 && dg.decode_source == "engine", "decode speed is the engine's own");
+    chk(*dg.drafts_offered == 20 && *dg.drafts_accepted == 15, "draft counters carried");
+    ChatResult cl;
+    cl.first = 1.0;
+    cl.total = 3.0;
+    cl.pieces = 41;
+    const Digest dc = digest(cl);
+    chk(dc.decode_tps && *dc.decode_tps == 20.0 && dc.decode_source == "client", "no timings: (gen-1)/(total-first) from the client");
+    ChatResult ce;
+    sse_event(R"({"error":{"message":"boom"}})", 0.1, ce);
+    chk(!digest(ce).ok && digest(ce).err.find("boom") != std::string::npos, "a streamed error makes the request not ok");
+
+    const auto s3 = stat({3.0, std::nullopt, 1.0, 2.0});
+    chk(s3 && s3->median == 2.0 && s3->min == 1.0 && s3->max == 3.0 && s3->n == 3, "median of three, missing values ignored");
+    chk(stat({1.0, 2.0, 3.0, 4.0})->median == 2.5, "an even count takes the mean of the middle two");
+    chk(!stat({std::nullopt}), "nothing measured -> no stat");
+    chk(*pctl({1.0, 2.0, 3.0, 4.0, 5.0}, 50) == 3.0 && *pctl({1.0, 2.0, 3.0, 4.0, 5.0}, 95) == 5.0, "percentiles by rank");
+    chk(redact("/home/bob/x by bob on box1", "/home/bob", "bob", "box1") == "~/x by <user> on <host>", "home, user and host redacted");
+    chk(slug("NVIDIA GeForce RTX 4060 Ti", 24) == "nvidia-geforce-rtx-4060", "gpu slug, cut at the limit");
 
     // ---- processes ----------------------------------------------------------------------------
     Launch sl;

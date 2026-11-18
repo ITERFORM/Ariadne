@@ -79,7 +79,7 @@ CONTEXT := src/context/tape.cpp src/context/render.cpp src/context/endpoint.cpp 
 # The limbo level: the harness's own inference engine. One front, the dwellers it admits, and
 # no Python holding the pipe open. server.cpp/http.cpp ride along because the level speaks HTTP
 # on a socket and proxies a llama-server over curl.
-DOCTOR := src/doctor/stack_conf.cpp src/doctor/stack.cpp src/doctor/afe.cpp src/doctor/doctor_main.cpp
+DOCTOR := src/doctor/stack_conf.cpp src/doctor/stack.cpp src/doctor/afe.cpp src/doctor/bench.cpp src/doctor/doctor_main.cpp
 LIMBO := src/limbo/shade.cpp src/limbo/spawn.cpp src/limbo/charon.cpp src/limbo/shade_strata.cpp src/limbo/shade_llama.cpp \
          src/limbo/minos.cpp src/limbo/level.cpp src/net/http.cpp src/net/server.cpp $(CORE) $(URLSAFE)
 MCPSCHEMA := src/tools/mcp_schema_cache.cpp $(SHA256)   # the staleness key is a sha256 of the config
