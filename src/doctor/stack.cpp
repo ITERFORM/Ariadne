@@ -879,9 +879,12 @@ int Stack::cmd_logs(const std::string& name, int lines, bool follow) const {
 int Stack::cmd_conf() const {
     std::error_code ec;
     const bool existed = fs::exists(paths_.conf(), ec);
-    const StackConf c = conf(true, false);
+    std::string note;
+    const StackConf c = load_conf(paths_, true, &note);
     out_.section("Stack configuration");
-    if (existed) out_.ok(paths_.conf().string()); else out_.ok(paths_.conf().string(), "(created)");
+    // a first run either imported the Python doctor's file or wrote the defaults: say which
+    if (existed) out_.ok(paths_.conf().string());
+    else out_.ok(paths_.conf().string(), "(" + (note.empty() ? std::string("created") : note) + ")");
     out_.note("llama.cpp   " + c.llama_dir().string());
     for (const char* n : kServers) {
         if (!c.enabled(n)) continue;
