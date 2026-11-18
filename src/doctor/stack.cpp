@@ -698,8 +698,21 @@ int Stack::cmd_setup() const {
         std::vector<std::string> cfg = {"cmake", "-S", c.llama_dir().string(), "-B", (c.llama_dir() / "build").string(),
                                         "-DCMAKE_BUILD_TYPE=Release"};
         if (cuda) cfg.insert(cfg.end(), {"-DGGML_CUDA=ON", "-DGGML_CUDA_FA_ALL_QUANTS=ON"});
-        // A bare -j is unbounded: on a 4-core, 6 GiB machine it swapped the box unresponsive.
-        const unsigned jobs = std::max(1u, std::thread::hardware_concurrency());
+        // A bare -j is unbounded: on a 4-core, 6 GiB box beside a running pod the OOM killer took
+        // the compilers and the machine stopped answering. Jobs = cores, or what free RAM holds at
+        // ~1.5 GiB per compiler, whichever is smaller.
+        unsigned jobs = std::max(1u, std::thread::hardware_concurrency());
+        {
+            std::ifstream mi("/proc/meminfo");
+            std::string line;
+            while (std::getline(mi, line)) {
+                if (line.rfind("MemAvailable:", 0) != 0) continue;
+                const double gib = std::atof(line.c_str() + 13) / (1024.0 * 1024.0);
+                jobs = std::max(1u, std::min(jobs, static_cast<unsigned>(gib / 1.5)));
+                break;
+            }
+        }
+        out_.dim("compiling with " + std::to_string(jobs) + " job(s) (cores and free RAM)");
         if (run(cfg) != 0 || run({"cmake", "--build", (c.llama_dir() / "build").string(), "--config", "Release",
                                   "--target", "llama-server", "-j", std::to_string(jobs)}) != 0) {
             out_.bad("build failed");
