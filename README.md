@@ -438,6 +438,12 @@ Supported deployment patterns include:
 - OpenAI-compatible remote providers.
 - Other compatible inference services.
 
+### The local stack: `ariadne doctor`
+
+`ariadne doctor` owns the machine's own llama.cpp servers, a port of the Python Daedalus doctor (`src/doctor/`). `setup` clones and builds the adaptive-KV llama.cpp fork (CUDA when `nvcc` is there, else the CPU) and fetches the models, through the `hf` CLI or, without it, over HTTPS into `<home>/models`. `start [dense|a3b|strata]` brings up the main server, waits for `/health` 200 from its own process, and only then the helper; `stop`, `restart`, `pause`, `resume`, `status`, `logs`, `command` (the exact launch line) and `watch` (restart when generation throughput collapses) follow. `stack.conf`, `run/` and `logs/stack/` live in the ariadne home; a `stack.conf` the Python doctor left in `~/.daedalus` is imported once.
+
+`ariadne doctor afe` serves mazemaker's extraction model on :8888 and is never a second model on the card: it refuses beside main/aux/vis or on a card already above `AFE_VRAM_BLOCK_MIB`, and `start` refuses while it serves. mazemaker's pod asks for it through a request file; a path unit calls `ariadne doctor afe wake`, which writes the reason for a refusal where the pod reads it, and `afe idle-check` stops it after `AFE_IDLE_SECONDS` unused (`src/doctor/afe.cpp`). On the development desktop the a3b launch line `ariadne doctor command a3b` prints is byte-identical to the Python doctor's.
+
 ### Reasoning control
 
 Ariadne distinguishes reasoning effort from an explicit thinking-token budget.

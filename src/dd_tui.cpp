@@ -34,6 +34,7 @@
 #include "dd/core/env.hpp"
 #include "dd/core/exit_status.hpp"
 #include "dd/core/home.hpp"
+#include "dd/doctor/doctor.hpp"
 #include "dd/core/json.hpp"
 #include "dd/core/logbook.hpp"
 #include "dd/core/message.hpp"
@@ -267,6 +268,20 @@ static void utf8_trunc(std::string& s, size_t n) {
 
 static const char* const kVersion = "0.1.0";
 
+// `ariadne doctor ...`: its own command line; --home anywhere in it picks the home.
+static int doctor_main(int argc, char** argv) {
+    std::string home_flag, why;
+    std::vector<std::string> rest;
+    for (int i = 2; i < argc; ++i) {
+        const std::string a = argv[i];
+        if (a == "--home" && i + 1 < argc) home_flag = argv[++i];
+        else rest.push_back(a);
+    }
+    const ddcore::Home home = ddcore::resolve_home(home_flag, "", &why);
+    if (home.root.empty()) { std::cerr << why << "\n"; return 2; }
+    return dd::doctor::run_doctor(rest, home.root);
+}
+
 static void usage(FILE* f) {
     std::fputs(
         "usage: ariadne [--home DIR | --config FILE | FILE] [-- message words...]\n"
@@ -276,6 +291,7 @@ static void usage(FILE* f) {
         "       ariadne [--home DIR] --pair [--name N] [--scopes LIST] [--host HOST:PORT] | --devices | --revoke ID\n"
         "       ariadne [--home DIR] --gateway-adopt DIR   take over a mazemaker-gateway gateway's identity and token\n"
         "       ariadne --init [--from FILE] [--rules]     write config.yaml and the folders beside the binary\n"
+        "       ariadne doctor [command]   the local llama.cpp stack and mazemaker's AFE model (doctor --help)\n"
         "       ariadne --help | --version\n"
         "\n"
         "  --home DIR      run from another folder (config.yaml, skills/, rules/, state/, logs/)\n"
@@ -641,6 +657,7 @@ static int run_gateway(const std::string& addr, const ddcore::Config& cfg, const
 
 int main(int argc, char** argv) {
     curl_global_init(CURL_GLOBAL_DEFAULT);   // before any thread touches curl
+    if (argc >= 2 && std::string(argv[1]) == "doctor") return doctor_main(argc, argv);
     std::string home_flag, config_flag, init_from, serve_addr, gateway_addr, limbo_addr, gw_action, gw_arg;
     dd::gateway::PairOptions pair_opt;
     bool init = false, init_rules = false;

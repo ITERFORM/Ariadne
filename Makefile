@@ -79,6 +79,7 @@ CONTEXT := src/context/tape.cpp src/context/render.cpp src/context/endpoint.cpp 
 # The limbo level: the harness's own inference engine. One front, the dwellers it admits, and
 # no Python holding the pipe open. server.cpp/http.cpp ride along because the level speaks HTTP
 # on a socket and proxies a llama-server over curl.
+DOCTOR := src/doctor/stack_conf.cpp src/doctor/stack.cpp src/doctor/afe.cpp src/doctor/doctor_main.cpp
 LIMBO := src/limbo/shade.cpp src/limbo/spawn.cpp src/limbo/charon.cpp src/limbo/shade_strata.cpp src/limbo/shade_llama.cpp \
          src/limbo/minos.cpp src/limbo/level.cpp src/net/http.cpp src/net/server.cpp $(CORE) $(URLSAFE)
 MCPSCHEMA := src/tools/mcp_schema_cache.cpp $(SHA256)   # the staleness key is a sha256 of the config
@@ -192,8 +193,8 @@ install: $(BUILD)/ariadne-install
 install-all: $(BUILD)/ariadne-install
 	@$< --booted --root . --home $(INSTALL_DIR) --agent --cli
 
-$(BUILD)/ariadne: $(SERVE) $(GWDEV) $(CORE) $(COREHOME) $(HOMEINIT) $(KNOWDEP) $(TOOLS) $(TOOLRUN) $(DELEGATE) $(VISION) $(TOOLLIMITS) $(THINTS) $(APPLY) $(PROVENANCE) $(ANSI) $(INTERRUPT) $(AGENT) $(CONFIG) $(MCP) $(MCPSCHEMA) $(TSEARCH) $(NET) $(HTTPLLM) $(CONTEXT) $(LIMBO) $(UI) $(ENV) $(wildcard include/dd/*.hpp include/dd/*/*.hpp) src/dd_tui.cpp
-	$(CXX) $(CXXFLAGS) -fopenmp $(sort $(LEARN) $(CORE) $(COREHOME) $(HOMEINIT) $(KNOWDEP) $(TOOLS) $(TOOLRUN) $(DELEGATE) $(VISION) $(TOOLLIMITS) $(THINTS) $(PATCH) $(FUZZY) $(APPLY) $(PROVENANCE) $(ANSI) $(INTERRUPT) $(AGENT) $(CONFIG) $(MCP) $(MCPSCHEMA) $(TSEARCH) $(NET) $(HTTPLLM) $(CONTEXT) $(LIMBO) $(UI) $(SERVE) $(GWDEV) $(ENV)) src/dd_tui.cpp -pthread $(CURL_LIBS) $(TLS_LIBS) -o $(BUILD)/ariadne
+$(BUILD)/ariadne: $(SERVE) $(GWDEV) $(CORE) $(COREHOME) $(HOMEINIT) $(KNOWDEP) $(TOOLS) $(TOOLRUN) $(DELEGATE) $(VISION) $(TOOLLIMITS) $(THINTS) $(APPLY) $(PROVENANCE) $(ANSI) $(INTERRUPT) $(AGENT) $(CONFIG) $(MCP) $(MCPSCHEMA) $(TSEARCH) $(NET) $(HTTPLLM) $(CONTEXT) $(LIMBO) $(DOCTOR) $(UI) $(ENV) $(wildcard include/dd/*.hpp include/dd/*/*.hpp) src/dd_tui.cpp
+	$(CXX) $(CXXFLAGS) -fopenmp $(sort $(LEARN) $(CORE) $(COREHOME) $(HOMEINIT) $(KNOWDEP) $(TOOLS) $(TOOLRUN) $(DELEGATE) $(VISION) $(TOOLLIMITS) $(THINTS) $(PATCH) $(FUZZY) $(APPLY) $(PROVENANCE) $(ANSI) $(INTERRUPT) $(AGENT) $(CONFIG) $(MCP) $(MCPSCHEMA) $(TSEARCH) $(NET) $(HTTPLLM) $(CONTEXT) $(LIMBO) $(DOCTOR) $(UI) $(SERVE) $(GWDEV) $(ENV)) src/dd_tui.cpp -pthread $(CURL_LIBS) $(TLS_LIBS) -o $(BUILD)/ariadne
 
 # The shipped binary itself, under ASan+UBSan. Every sanitizer target so far is a module
 # test: none of them ever runs ariadne's own startup, home resolution, argument parsing,
@@ -205,11 +206,11 @@ $(BUILD)/ariadne: $(SERVE) $(GWDEV) $(CORE) $(COREHOME) $(HOMEINIT) $(KNOWDEP) $
 # process exit and keeps the port. How long the PROCESS takes to leave is a sanitizer cost, not a gateway defect:
 # under host memory pressure it is LeakSanitizer scanning shadow memory at exit (7.8s measured, 2503 leaks at 2.42
 # MB of shadow, ~13.2 GB RSS), which a single ceiling once reported as "ignored SIGTERM".
-$(BUILD)/ariadne_asan: $(SERVE) $(GWDEV) $(CORE) $(COREHOME) $(HOMEINIT) $(KNOWDEP) $(TOOLS) $(TOOLRUN) $(DELEGATE) $(VISION) $(TOOLLIMITS) $(THINTS) $(APPLY) $(PROVENANCE) $(ANSI) $(INTERRUPT) $(AGENT) $(CONFIG) $(MCP) $(MCPSCHEMA) $(TSEARCH) $(NET) $(HTTPLLM) $(CONTEXT) $(LIMBO) $(UI) $(ENV) $(wildcard include/dd/*.hpp include/dd/*/*.hpp) src/dd_tui.cpp
+$(BUILD)/ariadne_asan: $(SERVE) $(GWDEV) $(CORE) $(COREHOME) $(HOMEINIT) $(KNOWDEP) $(TOOLS) $(TOOLRUN) $(DELEGATE) $(VISION) $(TOOLLIMITS) $(THINTS) $(APPLY) $(PROVENANCE) $(ANSI) $(INTERRUPT) $(AGENT) $(CONFIG) $(MCP) $(MCPSCHEMA) $(TSEARCH) $(NET) $(HTTPLLM) $(CONTEXT) $(LIMBO) $(DOCTOR) $(UI) $(ENV) $(wildcard include/dd/*.hpp include/dd/*/*.hpp) src/dd_tui.cpp
 	# -O1 with sanitizers makes GCC trace through libstdc++'s <regex> NFA and report a
 	# maybe-uninitialized inside std::function: a compiler false positive in the standard library,
 	# not a dd bug. The TSan targets already suppress the same diagnostic.
-	$(CXX) $(CXXFLAGS) -fopenmp -O1 -g -Wno-maybe-uninitialized -fsanitize=address,undefined $(sort $(LEARN) $(CORE) $(COREHOME) $(HOMEINIT) $(KNOWDEP) $(TOOLS) $(TOOLRUN) $(DELEGATE) $(VISION) $(TOOLLIMITS) $(THINTS) $(PATCH) $(FUZZY) $(APPLY) $(PROVENANCE) $(ANSI) $(INTERRUPT) $(AGENT) $(CONFIG) $(MCP) $(MCPSCHEMA) $(TSEARCH) $(NET) $(HTTPLLM) $(CONTEXT) $(LIMBO) $(UI) $(SERVE) $(GWDEV) $(ENV)) src/dd_tui.cpp -pthread $(CURL_LIBS) $(TLS_LIBS) -o $(BUILD)/ariadne_asan
+	$(CXX) $(CXXFLAGS) -fopenmp -O1 -g -Wno-maybe-uninitialized -fsanitize=address,undefined $(sort $(LEARN) $(CORE) $(COREHOME) $(HOMEINIT) $(KNOWDEP) $(TOOLS) $(TOOLRUN) $(DELEGATE) $(VISION) $(TOOLLIMITS) $(THINTS) $(PATCH) $(FUZZY) $(APPLY) $(PROVENANCE) $(ANSI) $(INTERRUPT) $(AGENT) $(CONFIG) $(MCP) $(MCPSCHEMA) $(TSEARCH) $(NET) $(HTTPLLM) $(CONTEXT) $(LIMBO) $(DOCTOR) $(UI) $(SERVE) $(GWDEV) $(ENV)) src/dd_tui.cpp -pthread $(CURL_LIBS) $(TLS_LIBS) -o $(BUILD)/ariadne_asan
 
 # Walks that binary through the paths a module test never touches. Needs a backend for
 # the turn and the serve bind; without one those two probes skip and say so.
