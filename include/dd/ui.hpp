@@ -44,7 +44,16 @@ inline constexpr uint32_t kNone = 0;
 constexpr uint32_t rgb(uint32_t hex) { return (hex & 0xFFFFFFu) | 0x1000000u; }
 uint32_t mix(uint32_t a, uint32_t b, double t);
 
-inline constexpr uint32_t kBold = 1, kDim = 2, kItalic = 4, kUnder = 8;
+inline constexpr uint32_t kBold = 1, kDim = 2, kItalic = 4, kUnder = 8, kStrike = 16;
+
+// The copy badge on a box's top-right corner: one cell, so a swap for another glyph is this line.
+inline constexpr char32_t kCopyGlyph = U'⧉';
+
+// A badge inside a card (a code block's corner): the cell it sits on, in the card's canvas, and what it copies.
+struct CopySpot {
+    int x = 0, y = 0;
+    std::string text;
+};
 
 // All-uint32, no padding: a Cell is 16 bytes the diff kernels compare as
 // four dwords (ui_simd.hpp).
@@ -542,7 +551,7 @@ private:
     // everything below: render thread only — the agent thread never touches any of it; what it
     // hands over arrives through q_ (a SlotRing) and is claimed here.
     std::deque<Entry> entries_;   // render thread: the scene's own log, drained by drain_inline
-    struct Cache { int w = -1, tw = -1; unsigned ver = 0; int spin = -1, view = -1, verb = -1; Canvas block; };
+    struct Cache { int w = -1, tw = -1; unsigned ver = 0; int spin = -1, view = -1, verb = -1; Canvas block; std::vector<CopySpot> spots; };
     std::deque<Cache> cache_;    // render thread: one canvas per Entry, positionally paired with entries_
     size_t printed_ = 0;     // drain_inline cursor (index into entries_)
     Info info_;
@@ -569,9 +578,9 @@ private:
     int scroll_ = 0, tick_ = 0;
     mutable int tools_scroll_ = 0;                       // calls scrolled past, newest first; clamped as it paints
     mutable struct { int x = 0, y = 0, w = 0, h = 0; } tools_box_;   // where the box last landed
-    struct CopyHit { int x, y; size_t idx; };
+    struct CopyHit { int x, y; size_t idx; int spot; };   // spot: a code block's badge in cache_[idx], -1 = the card's
     mutable std::vector<CopyHit> copy_hits_;             // the badges of the last painted transcript
-    mutable int flash_idx_ = -1, flash_until_ = 0;       // the badge just clicked shows a check until tick_ passes this
+    mutable int flash_idx_ = -1, flash_spot_ = -1, flash_until_ = 0;   // the badge just clicked shows a check until tick_ passes this
     ReasonView view_ = ReasonView::Tail;
     Verbosity verb_ = Verbosity::Normal;
     std::unique_ptr<Frame> frame_;
@@ -588,7 +597,7 @@ private:
     void close_live(clock::time_point at, double latency_ms);
     bool stale(size_t i, int w) const;
     const Canvas& block(size_t i, int w);
-    Canvas render(const Entry& e, int w) const;
+    Canvas render(const Entry& e, int w, std::vector<CopySpot>* spots = nullptr) const;
     double work_ms() const;
     void paint_transcript(Frame& f, int x, int y, int w, int h);
     void paint_splash(Frame& f, int x, int y, int w, int h) const;

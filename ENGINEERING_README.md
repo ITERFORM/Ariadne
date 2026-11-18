@@ -285,6 +285,13 @@ Highlights:
 - Double-buffered `Frame` / `Widget` / `Scene` rendering.
 - UTF-8 line editing, history, bracketed paste, mouse wheel, key decoding, and terminal restoration.
 - Live reasoning cards and streamed answer cards without moving content below the live tail.
+- **Answers are laid out as markdown, natively** (`src/ui_markdown.cpp`, no library): headings, emphasis,
+  code spans, links, quotes and GitHub alerts, nested and task lists, GFM tables (box-drawn, aligned, records
+  on a card too narrow for columns) and fenced code boxed and coloured by the grammar files. A streaming tail
+  renders as what it will be, so an open fence or `**` never flickers raw.
+- **Every box's ⧉ corner copies it:** a card copies its raw text (an answer its markdown), a code block the code
+  alone. CLIPBOARD and PRIMARY both, through wl-copy/xclip/xsel and OSC 52; middle click and ctrl-v paste
+  into the prompt.
 - `/context`, `/rebase`, `/resume`, `/plan`, `/learn`, `/reasoning`, `/effort`, `/verbose`, and related REPL commands.
 - **`/verbose verbose` is the instrument.** Every call leaves a dim accounting line — `http 200
   (first 429) · 3 sends · 1.9s waited · in 4,123 (960 cached, 23%) · out 300 · epoch 7 · tape 24/24

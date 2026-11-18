@@ -382,6 +382,8 @@ It includes:
 
 - Double-buffered rendering.
 - Live reasoning and answer cards.
+- Markdown answers: headings, lists, quotes, tables and boxed, highlighted code.
+- One-click copy on every box (a code block copies just the code) and clipboard paste.
 - Tool execution cards.
 - UTF-8 input and line editing.
 - Command history and bracketed paste.
