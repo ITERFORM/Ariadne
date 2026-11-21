@@ -1,5 +1,5 @@
-// tests/doctor_test.cpp — `ariadne doctor`: stack.conf, model lookup, launch lines, processes,
-// and mazemaker's AFE wake protocol. No GPU, no model: what is asserted is the doctor's own
+// tests/limbo_test.cpp — `ariadne limbo`: stack.conf, model lookup, launch lines, processes,
+// and mazemaker's AFE wake protocol. No GPU, no model: what is asserted is limbo's own
 // reasoning, and a `sleep` stands in for a server where a process is needed.
 #include <arpa/inet.h>
 #include <csignal>
@@ -17,13 +17,13 @@
 
 #include <optional>
 
-#include "dd/doctor/afe.hpp"
-#include "dd/doctor/bench.hpp"
-#include "dd/doctor/stack.hpp"
-#include "dd/doctor/stack_conf.hpp"
+#include "dd/limbo/afe.hpp"
+#include "dd/limbo/bench.hpp"
+#include "dd/limbo/stack.hpp"
+#include "dd/limbo/stack_conf.hpp"
 
 namespace fs = std::filesystem;
-using namespace dd::doctor;
+using namespace dd::limbo;
 
 namespace {
 int g_fail = 0;
@@ -55,7 +55,7 @@ std::string slurp(const fs::path& p) {
 
 int main() {
     const char* tmp_env = std::getenv("DD_TEST_TMP");
-    const fs::path tmp = fs::absolute(fs::path(tmp_env ? tmp_env : "build/tmp") / "doctor");
+    const fs::path tmp = fs::absolute(fs::path(tmp_env ? tmp_env : "build/tmp") / "limbo");
     fs::remove_all(tmp);
     fs::create_directories(tmp);
     const fs::path fake_home = tmp / "user";
@@ -63,7 +63,7 @@ int main() {
     ::setenv("HOME", fake_home.c_str(), 1);
     ::setenv("HF_HUB_CACHE", (tmp / "hub").c_str(), 1);
     ::setenv("MAZEMAKER_DIR", (fake_home / ".mazemaker").c_str(), 1);
-    ::setenv("DOCTOR_TEST_VAR", "xyz", 1);
+    ::setenv("LIMBO_TEST_VAR", "xyz", 1);
     ::setenv("PATH", "/usr/bin:/bin", 1);   // no nvidia-smi, hf or systemd-run from a dev box
 
     // ---- parse_conf --------------------------------------------------------------------
@@ -75,7 +75,7 @@ int main() {
         "export D=exported\n"
         "E=7 # trailing\n"
         "F=\"$HOME/x\"\n"
-        "G=${DOCTOR_TEST_VAR}/y\n"
+        "G=${LIMBO_TEST_VAR}/y\n"
         "H=$ARIADNE_HOME/llama\n"
         "I=$NOT_SET_ANYWHERE/z\n"
         "J=~/m\n"
@@ -88,7 +88,7 @@ int main() {
     chk(v.at("E") == "7", "inline comment dropped");
     chk(v.at("F") == fake_home.string() + "/x", "$HOME expanded");
     chk(v.at("G") == "xyz/y", "${VAR} from the environment");
-    chk(v.at("H") == "/opt/ar/llama", "$ARIADNE_HOME from the doctor's vars");
+    chk(v.at("H") == "/opt/ar/llama", "$ARIADNE_HOME from limbo's vars");
     chk(v.at("I") == "$NOT_SET_ANYWHERE/z", "unknown $VAR kept as written");
     chk(v.at("J") == fake_home.string() + "/m", "~ expanded");
     chk(!v.count("not"), "a line that is no assignment is skipped");
@@ -256,7 +256,7 @@ int main() {
     chk(a3b_threads(StackConf(Values{{"A3B_THREADS", "6"}}), 16) == 6, "A3B_THREADS wins when set");
 
     // ---- bench --------------------------------------------------------------------------------
-    using namespace dd::doctor::bench;
+    using namespace dd::limbo::bench;
     const std::string p1 = long_prompt(500, 7), p2 = long_prompt(500, 984);
     chk(p1 == long_prompt(500, 7), "a prompt is reproducible from its salt");
     chk(p1 != p2, "every run's salt makes a new prompt (no cache help)");
@@ -330,6 +330,6 @@ int main() {
     nl.argv = {"definitely-not-a-binary-xyz"};
     chk(!stack.start_one("vis", nl), "a missing binary is refused before spawning");
 
-    std::printf(g_fail ? "doctor: %d failed\n" : "doctor: all passed\n", g_fail);
+    std::printf(g_fail ? "limbo: %d failed\n" : "limbo: all passed\n", g_fail);
     return g_fail ? 1 : 0;
 }

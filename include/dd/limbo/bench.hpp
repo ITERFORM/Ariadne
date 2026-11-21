@@ -1,5 +1,5 @@
 #pragma once
-// dd/doctor/bench.hpp — `ariadne doctor bench`: what this box actually serves with, measured
+// dd/limbo/bench.hpp — `ariadne limbo bench`: what this box actually serves with, measured
 // over the real HTTP API, written as a report to keep or share.
 //
 //   chat        three short questions (~100 tokens out): decode tok/s, time to first token
@@ -17,10 +17,10 @@
 #include <vector>
 
 #include "dd/core/json.hpp"
-#include "dd/doctor/stack.hpp"
+#include "dd/limbo/stack.hpp"
 
 namespace dd {
-namespace doctor {
+namespace limbo {
 namespace bench {
 
 struct Options {
@@ -65,5 +65,5 @@ std::string redact(const std::string& text, const std::string& home, const std::
 std::string slug(const std::string& text, size_t limit);
 
 }  // namespace bench
-}  // namespace doctor
+}  // namespace limbo
 }  // namespace dd

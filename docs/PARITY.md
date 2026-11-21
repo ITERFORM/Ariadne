@@ -12,14 +12,14 @@ out of a README.
 | Context tape | Append-only render, epoch per generation, rebase from retrieval at watermarks, prewarm between turns | `42ea640` is an ancestor of HEAD; `src/context/engine.cpp:241,273,279,492,859` |
 | Retrieval | One `Router` at turn start, after tool batches, on failure; local BM25f catalogues + async pod leg | `src/know/trigger.cpp`, `src/know/router.cpp` |
 | Skills as guidelines | Bodies read on demand: `read_file("skill://name")`, `#2`, `#all`; offer thresholds in config, not code | `src/know/prompt.cpp:30-34`, `examples/ariadne/config.yaml:71-79`, `src/know/policy.cpp:24-28` |
-| Inference stack doctor | `ariadne doctor`: stack.conf (imported from `~/.daedalus`), setup, start/stop/restart/pause/resume of dense, a3b and strata, status, logs, command, watch, the AFE model with mazemaker's wake/idle protocol, and `bench` (its report not yet run against a live server from this port) | `src/doctor/`, `tests/doctor_test.cpp`; `py:daedalus_cli/stack.py`, `py:daedalus_cli/stack_afe.py`, `py:daedalus_cli/stack_bench.py` |
-| Rules | Tripwires that cost nothing until a pattern fires, loaded from `./rules/*.md` and `rule:` rows, `knowledge.rules` on/off | `src/dd_tui.cpp:1421-1427` |
+| Inference stack | `ariadne limbo` (the Python doctor's port): stack.conf (imported from `~/.daedalus`), setup, start/stop/restart/pause/resume of dense, a3b and strata, status, logs, command, watch, the AFE model with mazemaker's wake/idle protocol, and `bench` (its report not yet run against a live server from this port) | `src/limbo/`, `tests/limbo_test.cpp`; `py:daedalus_cli/stack.py`, `py:daedalus_cli/stack_afe.py`, `py:daedalus_cli/stack_bench.py` |
+| Rules | Tripwires that cost nothing until a pattern fires, loaded from `./rules/*.md` and `rule:` rows, `knowledge.rules` on/off | `src/dd_tui.cpp:1320-1326` |
 | Learning | `dd::learn` service: episodes, credit, priors, drafted skills, lifecycle | `docs/LEARN.md`, `src/learn/*` |
-| One prompt voice | A single `PromptComposer`, the pod's protocol text is not pasted | `src/dd_tui.cpp:1396-1405` |
+| One prompt voice | A single `PromptComposer`, the pod's protocol text is not pasted | `src/dd_tui.cpp:1295-1304` |
 | Verbosity | off / normal / full: card caps lift, arguments unclipped, reasoning card forced open, and a cut result states the tool's dropped count instead of the card's cap. `full` is the instrument, not a bigger card: every call leaves a `Kind::Wire` line — the status that answered and the one that started a re-send, the sends and the wall clock the pauses cost, the prompt and the share of it served from cache, the session totals, the epoch and the tape, the watermarks, the ledger's revision and whether it is anchored, the last rebase decision — plus a second line with the response headers that are not transport plumbing; the status row adds `in`, `cache N (M%)`, `sent N · <waited>`, `http`, `rev`, `rebases`; the engine panel adds `in`/`sends`/`http`/`hdrs` and the tape panel `marks`/`rebase`/`ledger` | `Verbosity` and `Kind::Wire` in `include/dd/ui.hpp:277`, `wire_line` at `src/ui.cpp:1800`, pushed at `src/ui.cpp:1760`, the engine's `in` row at `src/ui.cpp:2581`, the tape's `marks` row at `src/ui.cpp:2658`, `/verbose` + `display.verbose` + env `DD_VERBOSE` |
-| Workflow contract | One `PromptComposer::workflow_contract()` section in the composed prompt: plan before multi-step work, facts from running, done means run-and-looked, skills are guidance | `src/know/prompt.cpp:46-57`, wired at `src/dd_tui.cpp:1398-1399`, `agent.contract` toggles it |
-| Plan ledger | `todo` registered in both binaries; every state is also written to the maze as an append-only revision (`ariadne:plan:<session>:<rev>`, newest wins), adopted back by a fresh start, `/resume` and `/clear`, and carried into the turn's deep recall query; the ledger is handed over as the agent's ephemeral prompt and the tape engine commits it as numbered revisions on the tape — an anchor carrying the list, deltas after it, the list restated whenever no anchor survives a rebase, never in the request's tail — and an emptied ledger retires itself — and the ledger's last transition (all items closed) also writes one `status:plan:<session>:<rev>` node carrying the outcome, so a single recall answers "that work is done, and what was in it" without walking the revisions; the findings themselves stay the model's to write, and the prompt asks for one memory per fact | `src/dd_tui.cpp:1347`, `src/dd_agent_main.cpp:135`, `src/dd_tui.cpp:925`, `src/ui.cpp:2458`, `src/dd_tui.cpp:1602`, `src/context/engine.cpp:381` |
-| Code colouring, from data | A fence names a language and a file answers it: `GrammarSet::load` walks every skill root for `highlight.yaml`, `code_color` orders the skin's own `colors.code_*` line over the language file over the palette default, a tag no file defines claims no keyword, and only a language the file declares `diff: true` colours a `-` as a deletion | `GrammarSet::load` and `code_color` in `src/ui_grammar.cpp:273-325`, `highlight_row` in `src/ui.cpp:1419-1515`, where patch colouring outside a fence is scoped to a hunk header's claim (`hunk_contract` at `src/ui.cpp:1344-1375`: `@@ -a,b +c,d @@` promises at most b + c rows and an inflated claim is capped), roots at `src/dd_tui.cpp:1221-1238`, defaults shipped as `skills/highlight.yaml` and copied by `installer/ariadne_install.cpp:179-186` |
+| Workflow contract | One `PromptComposer::workflow_contract()` section in the composed prompt: plan before multi-step work, facts from running, done means run-and-looked, skills are guidance | `src/know/prompt.cpp:46-57`, wired at `src/dd_tui.cpp:1297-1298`, `agent.contract` toggles it |
+| Plan ledger | `todo` registered in both binaries; every state is also written to the maze as an append-only revision (`ariadne:plan:<session>:<rev>`, newest wins), adopted back by a fresh start, `/resume` and `/clear`, and carried into the turn's deep recall query; the ledger is handed over as the agent's ephemeral prompt and the tape engine commits it as numbered revisions on the tape — an anchor carrying the list, deltas after it, the list restated whenever no anchor survives a rebase, never in the request's tail — and an emptied ledger retires itself — and the ledger's last transition (all items closed) also writes one `status:plan:<session>:<rev>` node carrying the outcome, so a single recall answers "that work is done, and what was in it" without walking the revisions; the findings themselves stay the model's to write, and the prompt asks for one memory per fact | `src/dd_tui.cpp:1340`, `src/dd_agent_main.cpp:135`, `src/dd_tui.cpp:1736`, `src/ui.cpp:2458`, `src/dd_tui.cpp:1714`, `src/context/engine.cpp:381` |
+| Code colouring, from data | A fence names a language and a file answers it: `GrammarSet::load` walks every skill root for `highlight.yaml`, `code_color` orders the skin's own `colors.code_*` line over the language file over the palette default, a tag no file defines claims no keyword, and only a language the file declares `diff: true` colours a `-` as a deletion | `GrammarSet::load` and `code_color` in `src/ui_grammar.cpp:273-325`, `highlight_row` in `src/ui.cpp:1419-1515`, where patch colouring outside a fence is scoped to a hunk header's claim (`hunk_contract` at `src/ui.cpp:1344-1375`: `@@ -a,b +c,d @@` promises at most b + c rows and an inflated claim is capped), roots at `src/dd_tui.cpp:1120-1137`, defaults shipped as `skills/highlight.yaml` and copied by `installer/ariadne_install.cpp:179-186` |
 | Palette contrast | Every foreground that carries glyphs is measured against the skin's ground by WCAG luminance and lifted toward the pole the ground is not, so a hue keeps its hue and only luminance gives way; a stripe whose ground is the ground it sits on drops the fill before the colour, an achromatic claim falls back to the palette's hue for that kind, and what moved is counted on the status row | `lift` and `Theme::readable` at `src/ui.cpp:746-762`, the load pass at `src/ui.cpp:856-897`, `GrammarSet::reconcile` at `src/ui_grammar.cpp:296-315`, the readout at `src/ui.cpp:2652`, asserted in `tests/ui_test.cpp:1160-1230` |
 
 ## What is missing — measured, not assumed
@@ -98,11 +98,11 @@ Asserted in `tests/ui_test.cpp` through `Scene::row_text`; seen live with
 
 ### Mid-turn steering — closed
 Input typed while a turn runs is folded into that turn instead of waiting for it to end. What was
-typed mid-turn lands in a `core::SlotRing<16>` (`src/dd_tui.cpp:1940`) and `Agent::steer_hook`
-(`src/dd_tui.cpp:1978`) claims it with `claim_all()` — the payloads it pinned, oldest stamp first, so a
+typed mid-turn lands in a `core::SlotRing<16>` (`src/dd_tui.cpp:1916`) and `Agent::steer_hook`
+(`src/dd_tui.cpp:1917`) claims it with `claim_all()` — the payloads it pinned, oldest stamp first, so a
 prompt typed earlier enters earlier however the slots wrapped. Overflow is held in a list the key handler
 owns alone, and once anything is held everything typed after it waits too. The
-loop calls at the tool-round boundary (`src/agent/agent.cpp:460`) — after the tool results are
+loop calls at the tool-round boundary (`src/agent/agent.cpp:469-473`) — after the tool results are
 appended, before the next request — and the prompts it returns ride as user messages.
 `TapeEngine::on_steering` (`src/context/engine.cpp:835`) stamps each one with `steered`, so the
 fold is a fact of the tape rather than a widget's guess: the prompt card carries
@@ -133,9 +133,9 @@ and every refusal is a number a test reads: **44 refused of 300** events posted 
 router's **6 of 70** opens (`opened_lost`, each refused open still emitted to the sink), the soak's
 **44 of 300** (`unledgered`, the 256 held slots still claimable), and **0** at all three on a live turn
 with tools firing and a drained soak. `src` and `include` now hold no mutex, no `lock_guard`, no
-`condition_variable`, and no queue. `make tsan` builds and runs ten instrumented binaries —
+`condition_variable`, and no queue. `make tsan` builds and runs eleven instrumented binaries —
 `slot_ring`, `mark_set`, `ui`, `learn_credit`, `context`, `serve_concurrency`, `devices_race`,
-`device_gateway`, `relay_policy`, `limbo_race` — under `TSAN_OPTIONS=halt_on_error=1`, and exits non-zero if
+`device_gateway`, `relay_policy`, `delegate`, `delegate_batch_race` — under `TSAN_OPTIONS=halt_on_error=1`, and exits non-zero if
 any one reports a race or a leak. The gateway's replay and kill marks are atomic words in
 `dd::core::MarkSet` (`include/dd/core/mark_set.hpp:76-82`), not a map behind a mutex: a
 mutex had come back there when replay was added, and this seam deleted it again.
@@ -156,6 +156,43 @@ divergences from the Python tool: no `tool_trace` (the child's transcript is not
 by `Agent::run`); the depth rule keeps the tool out of a depth-2 child's registry instead
 of refusing the call after the fact; a blank child reply is the loop's own blank-retry
 epilogue, so `status:"failed"` is a guard, not a path a scripted child reaches.
+
+### Cron job execution
+Landed. `src/cron/` is no longer schedule math and storage alone: `src/cron/runner.cpp`
+runs the due jobs and `src/cron/executor.cpp` runs one job's prompt on a fresh ephemeral
+agent (own transcript, no tape, a wire copy — the delegate child's assembly). The gateway
+starts the ticker beside its relay thread (one tick per `cron.tick_seconds`, default 60),
+and `ariadne --cron-tick` runs one pass by hand under the same tick lock
+(`cron/.tick.lock`, flock, non-blocking: a tick beside a live gateway skips). The pipeline
+is the Python `py:cron/scheduler.py` tick() shape: `advance_next_run` before the run, the
+pre-run script (path-confined to `<home>/scripts`, argv-exact, stdout/stderr apart, wall
+clock bounded, process group killed at the deadline), skills and the cron hint in the
+prompt, the output doc under `cron/output/{id}/`, `[SILENT]` suppression, delivery-target
+resolution, `mark_job_run`. Due jobs park on the serve layer's shared turn claim (one
+atomic word, `src/serve/chat_api.cpp`) instead of interleaving with a device turn on a
+single-sequence endpoint; a job that goes quiet past `cron.timeout_seconds` (default 600)
+is interrupted and marked `TimeoutError`, and a shutdown mid-run leaves the job unmarked —
+its schedule was already advanced, the exact bookkeeping a crash leaves.
+
+Measured: `tests/cron_runner_test.cpp` (75 checks) runs the whole pipeline against fakes
+and the script paths against a real interpreter — confinement (`../`, absolute, missing),
+exit-code framing, a 1 s timeout kill, `[SILENT]`, the failure notice with its delivery
+wrap, the park, the tick lock, and the watchdog (a wedged run interrupted and marked well
+under the 8 s bound for a 1 s limit); its TSan twin covers the worker/watchdog hand-off.
+End to end on the real binary against `tests/stub_llm.py`: a seeded due job went from
+`jobs.json` to `1 job(s) run` in 5.0 s wall including process boot — output doc written,
+`last_status: ok`, `next_run_at` advanced one minute. Divergences from the Python
+scheduler: the platform senders are absent, so delivery resolves and wraps but the send is
+`DeliverySink`'s seam and a resolved target records `platform 'X' not configured/enabled`
+as `last_delivery_error` where the Python fell through to its standalone send
+(`platform:rest` also skips the channel-directory name resolution until the adapters
+land); per-job provider routing (runtime provider, smart routing, credential pools) is not
+modeled on this wire — `job.model`/`job.base_url` override the wire's and `job.provider` is
+ignored; the timeout error carries no "last activity" narration; the doc's Run Time is UTC;
+script redaction is the ported pure masker, not the unported regex cascade; script capture
+is bounded at 1 MiB per stream; no session-store rows are written; and the ticker is quiet
+(`--cron-tick` is the verbose face). Job CRUD stays library-only — the Python's
+`daedalus cron` CLI and the `cronjob` toolset are not ported.
 
 ### Calibration — closed: the thresholds are measured, and they moved
 `ariadne-skills replay FILE [--home DIR]` (`src/cli_main.cpp`) now sweeps the offer rule's own levers
@@ -233,7 +270,7 @@ the next replay is measured against; the budgets (`knowledge.budget.*`) are the 
 
 The three seams the ledger above claims, as shipped objects. The highlight seam is what the Rust grammar table
 becomes: roots are read once at startup and the pointers travel through the paint chain, so a render pass parses
-nothing (`src/dd_tui.cpp:1310`, `include/dd/ui.hpp:227`, `include/dd/ui.hpp:262`). The hand-off seam is the same
+nothing (`src/dd_tui.cpp:1306-1320`, `include/dd/ui.hpp:227`, `include/dd/ui.hpp:262`). The hand-off seam is the same
 object at both ends — a lock-free ring whose capacity is its ceiling (`include/dd/core/slot_ring.hpp:75-108`).
 
 ```mermaid

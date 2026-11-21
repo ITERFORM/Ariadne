@@ -1,5 +1,5 @@
-// src/doctor/afe.cpp — mazemaker's AFE model on :8888. py: daedalus_cli/stack_afe.py.
-#include "dd/doctor/afe.hpp"
+// src/limbo/afe.cpp — mazemaker's AFE model on :8888. py: daedalus_cli/stack_afe.py.
+#include "dd/limbo/afe.hpp"
 
 #include <chrono>
 #include <cstdlib>
@@ -16,7 +16,7 @@
 namespace fs = std::filesystem;
 
 namespace dd {
-namespace doctor {
+namespace limbo {
 namespace afe {
 
 namespace {
@@ -159,14 +159,14 @@ std::vector<std::string> blockers(const Stack& s, const StackConf& c) {
     std::vector<std::string> reasons;
     if (!enabled(c)) reasons.push_back("AFE_ENABLED=0 in stack.conf");
     if (::access(c.server().c_str(), X_OK) != 0)
-        reasons.push_back("llama-server not built (" + c.server().string() + ") — run: ariadne doctor setup");
+        reasons.push_back("llama-server not built (" + c.server().string() + ") — run: ariadne limbo setup");
     if (model(c, s.paths()).empty())
-        reasons.push_back("AFE model not on disk: " + get(c, "AFE_REPO") + " / " + get(c, "AFE_FILE") + " — run: ariadne doctor afe fetch");
+        reasons.push_back("AFE model not on disk: " + get(c, "AFE_REPO") + " / " + get(c, "AFE_FILE") + " — run: ariadne limbo afe fetch");
     const auto up = stack_serving(s, c);
     if (!up.empty()) {
         std::string list;
         for (const auto& u : up) list += (list.empty() ? "" : ", ") + u;
-        reasons.push_back("never two models — the stack is serving: " + list + " — stop it first: ariadne doctor stop");
+        reasons.push_back("never two models — the stack is serving: " + list + " — stop it first: ariadne limbo stop");
     }
     const long used = vram_used_mib();
     const long block = num(c, "AFE_VRAM_BLOCK_MIB");
@@ -246,7 +246,7 @@ std::pair<bool, std::string> start(const Stack& s, const StackConf& c, int ready
     const long timeout = ready_timeout >= 0 ? ready_timeout : num(c, "AFE_READY_TIMEOUT");
     if (serving(s, c)) {
         if (healthy(c) || wait_healthy(s, c, timeout)) return {true, "already serving"};
-        return {false, "AFE server is up but not healthy — ariadne doctor logs afe"};
+        return {false, "AFE server is up but not healthy — ariadne limbo logs afe"};
     }
     const auto reasons = blockers(s, c);
     if (!reasons.empty()) {
@@ -255,14 +255,14 @@ std::pair<bool, std::string> start(const Stack& s, const StackConf& c, int ready
         return {false, joined};
     }
     share_key_with_pod();
-    if (!launch(s, argv(c, model(c, s.paths()), api_key()))) return {false, "llama-server failed to launch — ariadne doctor logs afe"};
+    if (!launch(s, argv(c, model(c, s.paths()), api_key()))) return {false, "llama-server failed to launch — ariadne limbo logs afe"};
     // used from the moment it starts: an old last-used stamp let the idle timer stop a loading model
     write_file(last_used_file(), epoch());
     if (!wait_healthy(s, c, timeout)) {
         const bool died = !pid_alive(s.pid_of(kName));
         s.stop_one(kName);
         return {false, std::string("AFE server ") + (died ? "died while loading" : "was not healthy within " + std::to_string(timeout) + "s")
-                           + " (CUDA OOM? raise AFE_N_CPU_MOE) — ariadne doctor logs afe"};
+                           + " (CUDA OOM? raise AFE_N_CPU_MOE) — ariadne limbo logs afe"};
     }
     return {true, "started"};
 }
@@ -273,7 +273,7 @@ int cmd_status(const Stack& s, const StackConf* given) {
     if (!enabled(c)) { s.out().dim("afe  disabled (AFE_ENABLED=0)"); return 0; }
     const std::string gguf = model(c, s.paths());
     if (!gguf.empty()) s.out().ok("afe model: " + fs::path(gguf).filename().string(), "(" + human_size(gguf) + ")");
-    else s.out().bad("afe model missing", "— " + get(c, "AFE_REPO") + " — run: ariadne doctor afe fetch");
+    else s.out().bad("afe model missing", "— " + get(c, "AFE_REPO") + " — run: ariadne limbo afe fetch");
     const pid_t pid = s.pid_of(kName);
     const std::string where = h + ":" + std::to_string(p);
     if (pid_alive(pid)) {
@@ -364,5 +364,5 @@ int cmd_idle_check(const Stack& s) {
 }
 
 }  // namespace afe
-}  // namespace doctor
+}  // namespace limbo
 }  // namespace dd

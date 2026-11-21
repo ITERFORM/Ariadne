@@ -31,11 +31,13 @@
 #include "dd/context/engine.hpp"
 #include "dd/context/maze.hpp"
 #include "dd/context/recall.hpp"
+#include "dd/cron/executor.hpp"
+#include "dd/cron/runner.hpp"
 #include "dd/core/config.hpp"
 #include "dd/core/env.hpp"
 #include "dd/core/exit_status.hpp"
 #include "dd/core/home.hpp"
-#include "dd/doctor/doctor.hpp"
+#include "dd/limbo/limbo.hpp"
 #include "dd/core/json.hpp"
 #include "dd/core/logbook.hpp"
 #include "dd/core/message.hpp"
@@ -50,7 +52,6 @@
 #include "dd/know/tripwire.hpp"
 #include "dd/learn/service.hpp"
 #include "dd/know/wiring.hpp"
-#include "dd/limbo/level.hpp"
 #include "dd/tools/fs_tools.hpp"
 #include "dd/tools/delegate_tool.hpp"
 #include "dd/tools/vision_tool.hpp"
@@ -271,8 +272,8 @@ static void utf8_trunc(std::string& s, size_t n) {
 
 static const char* const kVersion = "0.1.0";
 
-// `ariadne doctor ...`: its own command line; --home anywhere in it picks the home.
-static int doctor_main(int argc, char** argv) {
+// `ariadne limbo ...`: its own command line; --home anywhere in it picks the home.
+static int limbo_main(int argc, char** argv) {
     std::string home_flag, why;
     std::vector<std::string> rest;
     for (int i = 2; i < argc; ++i) {
@@ -282,19 +283,18 @@ static int doctor_main(int argc, char** argv) {
     }
     const ddcore::Home home = ddcore::resolve_home(home_flag, "", &why);
     if (home.root.empty()) { std::cerr << why << "\n"; return 2; }
-    return dd::doctor::run_doctor(rest, home.root);
+    return dd::limbo::run_limbo(rest, home.root);
 }
 
 static void usage(FILE* f) {
     std::fputs(
         "usage: ariadne [--home DIR | --config FILE | FILE] [-- message words...]\n"
         "       ariadne [--home DIR | --config FILE] --serve [HOST:]PORT   the agent as an OpenAI-compatible server\n"
-        "       ariadne [--home DIR] --limbo [HOST:]PORT   run the agent on its own inference engine: the limbo level\n"
         "       ariadne [--home DIR] --gateway [HOST:]PORT     the agent, its memory and model for paired phones (TLS)\n"
         "       ariadne [--home DIR] --pair [--name N] [--scopes LIST] [--host HOST:PORT] | --devices | --revoke ID\n"
         "       ariadne [--home DIR] --gateway-adopt DIR   take over a mazemaker-gateway gateway's identity and token\n"
         "       ariadne --init [--from FILE] [--rules]     write config.yaml and the folders beside the binary\n"
-        "       ariadne doctor [command]   the local llama.cpp stack and mazemaker's AFE model (doctor --help)\n"
+        "       ariadne limbo [command]    the local inference stack and mazemaker's AFE model (limbo --help)\n"
         "       ariadne --help | --version\n"
         "\n"
         "  --home DIR      run from another folder (config.yaml, skills/, rules/, state/, logs/)\n"
@@ -308,15 +308,12 @@ static void usage(FILE* f) {
         "  --gateway ADDR  TLS on ADDR (PORT = 0.0.0.0:PORT) for paired devices: /command (session, pod, bridge,\n"
         "                  llm; AES-GCM inside TLS), /bridge/stream, and the agent's /v1 surface per device scope;\n"
         "                  gateway.relay_url dials out to a relay for phones away from the LAN\n"
-        "  --limbo ADDR    the limbo level on ADDR (PORT = 127.0.0.1:PORT): one front, the dwellers config.yaml\n"
-        "                  names (limbo.strata_exe, limbo.llama_server / limbo.llama_base_url), and the harness's\n"
-        "                  endpoint pointed at it — the harness answers itself instead of dialling out to a server\n"
         "  --pair          mint a device token and print its pairing code (scopes: chat,memory,tools,admin)\n"
         "  --devices       list paired devices    --revoke ID   end one\n"
+        "  --cron-tick     run the due cron jobs once (the gateway's ticker runs them anyway) and exit\n"
         "\n"
         "env: DD_HOME DD_BASE_URL DD_MODEL DD_API_KEY DD_MAX_TURNS DD_SERVE_KEY DD_WIRE_ATTEMPTS\n"
-        "     DD_WIRE_BUDGET_MS DD_TUI_COLS DD_TUI_ROWS DD_TUI_MOUSE=0 NO_COLOR\n"
-        "     DD_STRATA_EXE DD_LLAMA_SERVER DD_LIMBO_LLAMA_URL   the dwellers --limbo spawns or adopts\n",
+        "     DD_WIRE_BUDGET_MS DD_TUI_COLS DD_TUI_ROWS DD_TUI_MOUSE=0 NO_COLOR\n",
         f);
 }
 
@@ -585,10 +582,51 @@ struct GatewayTurns : AgentTurns {
     }
 };
 
+// ---- cron: the gateway owns the home, so it runs the due jobs (dd/cron/runner.hpp) ----
+// The executor is the delegate child's assembly: a fresh ephemeral agent per job (own
+// transcript, no tape) on a wire copy, quiet. It claims the serve layer's turn gate, so a
+// clock turn and a device turn never interleave on a single-sequence endpoint.
+struct CronStack {
+    dd::cron::AgentJobExecutor exec;
+    dd::cron::NullDelivery sink;
+    dd::cron::Scheduler sched;
+    CronStack(const ddcore::Config& cfg, dd::cron::AgentJobExecutorDeps deps)
+        : exec(std::move(deps)), sink(), sched(dd::cron::options_from(cfg), exec, sink) {}
+};
+
+static dd::cron::AgentJobExecutorDeps cron_deps(dd::agent::Agent& agent, dd::agent::HttpLLM& llm,
+                                                dd::agent::ToolGate& gate, const std::string& model) {
+    dd::cron::AgentJobExecutorDeps deps;
+    deps.transport = &llm;
+    deps.registry = agent.registry;
+    deps.gate = &gate;
+    deps.system_prompt = agent.system_prompt;
+    deps.fallback_model = model.empty() ? agent.model : model;
+    deps.max_iterations = agent.max_iterations;
+    return deps;
+}
+
+// One manual tick, the CLI face of the gateway's ticker (`ariadne --cron-tick`): the same
+// pipeline once, verbosely, under the same tick lock — beside a live gateway it either takes
+// the lock or reports that the gateway already holds it.
+static int run_cron_tick(const ddcore::Config& cfg, dd::agent::Agent& agent, dd::agent::HttpLLM& llm,
+                         dd::agent::ToolGate& gate, const std::string& model,
+                         const dd::cron::SkillLoader& skills) {
+    std::atomic<bool> claim{false};
+    CronStack cron(cfg, cron_deps(agent, llm, gate, model));
+    cron.sched.skill_loader = skills;
+    cron.sched.claim = &claim;
+    cron.sched.note = [](const std::string& s) { std::printf("%s\n", s.c_str()); };
+    const int ran = cron.sched.tick();
+    std::printf("cron tick: %d job(s) run\n", ran);
+    return 0;
+}
+
 static int run_gateway(const std::string& addr, const ddcore::Config& cfg, const std::filesystem::path& gdir,
                        dd::agent::Agent& agent, dd::agent::HttpLLM& llm, dd::agent::ToolGate& inner_gate,
                        const std::string& model, const std::string& home, int tool_count,
-                       const std::vector<std::string>& boot_errors) {
+                       const std::vector<std::string>& boot_errors,
+                       const dd::cron::SkillLoader& skill_loader) {
     std::string host = "0.0.0.0", port_s = addr;
     if (const size_t colon = addr.rfind(':'); colon != std::string::npos) {
         host = addr.substr(0, colon);
@@ -616,7 +654,11 @@ static int run_gateway(const std::string& addr, const ddcore::Config& cfg, const
     info.upstream_model = model;
     info.home = home;
     info.tools = tool_count;
-    dd::serve::ChatApi api(info, "", turns);   // the gateway authenticates before the API sees a request
+    // The one-turn-at-a-time gate is shared: the device surface's turns and the cron ticker's
+    // job runs claim the same word, so a due job parks while a turn runs instead of
+    // interleaving on a single-sequence endpoint.
+    std::atomic<bool> turn_claim{false};
+    dd::serve::ChatApi api(info, "", turns, &turn_claim);   // the gateway authenticates before the API sees a request
 
     llm.on_begin = [] {};
     llm.on_reasoning = [&api](const std::string& d) { api.on_reasoning(d); };
@@ -645,12 +687,22 @@ static int run_gateway(const std::string& addr, const ddcore::Config& cfg, const
               << " tools · " << devices << " paired device(s) · fp sha256/" << id->fp_b64() << "\n";
     if (devices == 0) std::cerr << "ariadne gateway: no device is paired yet: `ariadne --pair` prints a code for one\n";
 
+    // The clock's turns: due cron jobs run here (dd/cron/runner.hpp). The ticker is quiet
+    // (the job records carry the result) and stops with the process.
+    CronStack cron(cfg, cron_deps(agent, llm, inner_gate, model));
+    cron.sched.skill_loader = skill_loader;
+    cron.sched.claim = &turn_claim;
+    std::thread cron_thread;
+    if (!cfg.has("cron.enabled") || cfg.get_bool("cron.enabled"))
+        cron_thread = std::thread([&cron] { cron.sched.run(g_sig); });
+
     install_term_handlers();
     std::thread relay_thread;
     const std::string relay_url = dd::gateway::relay_url_from(cfg);
     dd::gateway::RelayClient relay(relay_url, *id, gw);
     if (!relay_url.empty()) relay_thread = std::thread([&relay] { relay.run(g_sig); });
     server.serve(g_sig);
+    if (cron_thread.joinable()) cron_thread.join();
     if (relay_thread.joinable()) relay_thread.join();
     dd::tools::shell_kill_all();
     dd::gateway::free_server_ctx(tls);
@@ -660,10 +712,11 @@ static int run_gateway(const std::string& addr, const ddcore::Config& cfg, const
 
 int main(int argc, char** argv) {
     curl_global_init(CURL_GLOBAL_DEFAULT);   // before any thread touches curl
-    if (argc >= 2 && std::string(argv[1]) == "doctor") return doctor_main(argc, argv);
-    std::string home_flag, config_flag, init_from, serve_addr, gateway_addr, limbo_addr, gw_action, gw_arg;
+    // `doctor` stays as a hidden alias: mazemaker's AFE units and installer still call it.
+    if (argc >= 2 && (std::string(argv[1]) == "limbo" || std::string(argv[1]) == "doctor")) return limbo_main(argc, argv);
+    std::string home_flag, config_flag, init_from, serve_addr, gateway_addr, gw_action, gw_arg;
     dd::gateway::PairOptions pair_opt;
-    bool init = false, init_rules = false;
+    bool init = false, init_rules = false, cron_tick = false;
     std::vector<std::string> msg_words;
     bool after_dd = false;
     for (int i = 1; i < argc; ++i) {
@@ -686,10 +739,10 @@ int main(int argc, char** argv) {
         else if (a == "--home") home_flag = value("--home");
         else if (a == "--config") config_flag = value("--config");
         else if (a == "--init") init = true;
+        else if (a == "--cron-tick") cron_tick = true;
         else if (a == "--rules") init_rules = true;
         else if (a == "--from") init_from = value("--from");
         else if (a == "--serve") serve_addr = value("--serve");
-        else if (a == "--limbo") limbo_addr = value("--limbo");
         else if (a == "--gateway") gateway_addr = value("--gateway");
         else if (a == "--pair") gw_action = "pair";
         else if (a == "--devices") gw_action = "devices";
@@ -834,101 +887,6 @@ int main(int argc, char** argv) {
 
     if (base_url.empty()) { std::cerr << "no model.base_url and DD_BASE_URL unset\\n"; return 2; }
     dd::tools::admit_configured_url(base_url);   // the operator's model may sit on the LAN (a phone's does)
-
-    // The limbo level: the harness's own inference engine, in this process. --limbo is the
-    // declaration of intent, so when it is given the endpoint IS the level — a harness that
-    // dials out to someone else's server while owning its own dwellers is two engines pretending
-    // to be one. The level outlives main's scope by destructor: every return path ends it.
-    std::unique_ptr<dd::limbo::LimboLevel> limbo;
-    if (!limbo_addr.empty()) {
-        dd::limbo::LimboConfig lc;
-        lc.bind = "127.0.0.1";
-        lc.port = 0;
-        if (const auto colon = limbo_addr.rfind(':'); colon != std::string::npos) {
-            lc.bind = limbo_addr.substr(0, colon);
-            try { lc.port = std::stoi(limbo_addr.substr(colon + 1)); } catch (const std::exception&) {
-                std::cerr << "ariadne: --limbo '" << limbo_addr << "' has no numeric port\n"; return 2;
-            }
-        } else if (!limbo_addr.empty()) {
-            try { lc.port = std::stoi(limbo_addr); } catch (const std::exception&) {
-                std::cerr << "ariadne: --limbo '" << limbo_addr << "' is not a port\n"; return 2;
-            }
-        }
-        if (lc.port <= 0 || lc.port > 65535) { std::cerr << "ariadne: --limbo needs a port in 1..65535\n"; return 2; }
-        if (cfg.has("limbo.respawn_budget")) lc.respawn_budget = cfg.get_int("limbo.respawn_budget");
-
-        // A YAML list of strings becomes the dweller's argv, in order. Keys that name no list
-        // are no arguments, not a silently empty argv the engine would read as a bad flag.
-        auto list_of = [&cfg](const std::string& key) {
-            std::vector<std::string> out;
-            if (const ddcore::Json* l = cfg.get_list(key)) {
-                for (const auto& v : l->arr) if (v->type == ddcore::Json::Str) out.push_back(v->str);
-            }
-            return out;
-        };
-        const std::string log = cfg.get_string("limbo.log").empty()
-                                    ? (home.logs() / "limbo.log").string()
-                                    : cfg.get_string("limbo.log");
-        const std::string dweller_model = model.empty() ? "limbo" : model;
-        const int n_ctx = static_cast<int>(cfg.get_int("limbo.n_ctx"));
-        const int ready_s = static_cast<int>(cfg.get_int("limbo.ready_timeout_s"));
-        const int silence_s = static_cast<int>(cfg.get_int("limbo.silence_s"));
-
-        const std::string strata_exe = env_or("DD_STRATA_EXE", cfg.get_string("limbo.strata_exe"));
-        if (!strata_exe.empty()) {
-            dd::limbo::ShadeSpec s;
-            s.kind = dd::limbo::ShadeKind::Strata;
-            s.name = "strata";
-            s.model_id = dweller_model;
-            s.exe = strata_exe;
-            s.args = list_of("limbo.strata_args");
-            s.cwd = cfg.get_string("limbo.strata_cwd");
-            s.log = log;
-            s.n_ctx = n_ctx;
-            s.ready_timeout_s = ready_s;
-            s.silence_s = silence_s > 0 ? silence_s : 120;
-            lc.shades.push_back(std::move(s));
-        }
-        const std::string llama_exe = env_or("DD_LLAMA_SERVER", cfg.get_string("limbo.llama_server"));
-        const std::string llama_url = env_or("DD_LIMBO_LLAMA_URL", cfg.get_string("limbo.llama_base_url"));
-        if (!llama_exe.empty() || !llama_url.empty()) {
-            dd::limbo::ShadeSpec s;
-            s.kind = dd::limbo::ShadeKind::Llama;
-            s.name = "llama";
-            s.model_id = dweller_model;
-            s.exe = llama_exe;          // empty: adopted, not owned — this level never ends a server it did not spawn
-            s.args = list_of("limbo.llama_args");
-            s.cwd = cfg.get_string("limbo.llama_cwd");
-            s.log = log;
-            s.base_url = llama_url;
-            s.n_ctx = n_ctx;
-            s.ready_timeout_s = ready_s > 0 ? ready_s : 120;
-            s.silence_s = silence_s > 0 ? silence_s : 120;
-            lc.shades.push_back(std::move(s));
-        }
-        if (lc.shades.empty()) {
-            std::cerr << "ariadne: --limbo has no dweller to admit.\n"
-                      << "  set limbo.strata_exe (the packed-MoE engine) and/or limbo.llama_server\n"
-                      << "  (or limbo.llama_base_url to adopt a llama-server someone else started);\n"
-                      << "  DD_STRATA_EXE / DD_LLAMA_SERVER / DD_LIMBO_LLAMA_URL say the same thing.\n"
-                      << "  Nothing was started and the endpoint stayed " << base_url << ".\n";
-            return 2;
-        }
-        limbo = std::make_unique<dd::limbo::LimboLevel>(std::move(lc));
-        std::string started;
-        if (!limbo->start(started)) {
-            std::cerr << "ariadne: the limbo level could not come up: " << started << "\n";
-            limbo.reset();
-            return 2;
-        }
-        // A dweller that failed its load is said, and the level keeps serving with the rest.
-        // Swallowing it would make a missing engine look like a working one.
-        if (!started.empty()) std::cerr << "ariadne limbo: " << started;
-        base_url = "http://127.0.0.1:" + std::to_string(limbo->port()) + "/v1";
-        dd::tools::admit_configured_url(base_url);
-        std::fprintf(stderr, "ariadne limbo: %s:%d — %zu dweller(s) admitted, endpoint now %s\n",
-                     limbo->bind().c_str(), limbo->port(), limbo->minos().count(), base_url.c_str());
-    }
 
     const bool to_tty = isatty(STDOUT_FILENO);
     const bool serving = !serve_addr.empty() || !gateway_addr.empty();
@@ -1864,9 +1822,19 @@ int main(int argc, char** argv) {
     };
 
     // ---- --serve: the same assembled agent, its events on the wire instead of the screen ----
+    dd::cron::SkillLoader skill_loader;
+    if (skill_cat) skill_loader = [cat = skill_cat](const std::string& name) -> std::optional<std::string> {
+        auto card = cat->find(name);
+        if (!card) return std::nullopt;
+        dd::know::Uri u = card->uri;
+        u.page = "all";   // the whole skill, not the first page
+        auto body = cat->open(u);
+        return body ? std::optional<std::string>(body->text) : std::nullopt;
+    };
+    if (cron_tick) return run_cron_tick(cfg, agent, llm, gate, model, skill_loader);
     if (!gateway_addr.empty())
         return run_gateway(gateway_addr, cfg, dd::gateway::state_dir(home.state()), agent, llm, gate, model,
-                           home.root.string(), tool_count, boot_errors);
+                           home.root.string(), tool_count, boot_errors, skill_loader);
     if (serving) {
         std::string serve_key = env_or("DD_SERVE_KEY", cfg.get_string("serve.api_key"));
         return run_serve(serve_addr, serve_key, agent, llm, model, home.root.string(), tool_count, boot_errors);

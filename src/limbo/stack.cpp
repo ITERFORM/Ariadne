@@ -1,6 +1,6 @@
-// src/doctor/stack.cpp — the local inference stack: processes, launch lines, commands.
+// src/limbo/stack.cpp — the local inference stack: processes, launch lines, commands.
 // py: daedalus_cli/stack.py.
-#include "dd/doctor/stack.hpp"
+#include "dd/limbo/stack.hpp"
 
 #include <atomic>
 #include <cerrno>
@@ -21,14 +21,14 @@
 #include <thread>
 #include <unistd.h>
 
-#include "dd/doctor/afe.hpp"
+#include "dd/limbo/afe.hpp"
 #include "dd/limbo/spawn.hpp"
 #include "dd/net/http.hpp"
 
 namespace fs = std::filesystem;
 
 namespace dd {
-namespace doctor {
+namespace limbo {
 
 const char* const kServers[3] = {"main", "aux", "vis"};
 const char* const kProfiles[3] = {"dense", "a3b", "strata"};
@@ -278,11 +278,11 @@ bool Stack::start_one(const std::string& name, const Launch& l) const {
     std::error_code ec;
     fs::create_directories(paths_.logs(), ec);
     std::string err;
-    const int log = limbo::open_log_sink(log_file(name), err);
-    limbo::SpawnStdio io;
+    const int log = open_log_sink(log_file(name), err);
+    SpawnStdio io;
     io.out_write = log;
     io.log_fd = log;
-    const pid_t pid = limbo::spawn_process(exe, l.argv, l.cwd, l.env, io, err);
+    const pid_t pid = spawn_process(exe, l.argv, l.cwd, l.env, io, err);
     if (log >= 0) ::close(log);
     if (pid <= 0) { out_.bad(name + " failed to launch", "(" + err + ")"); return false; }
     write_text(pid_file(name), std::to_string(pid));
@@ -296,11 +296,11 @@ bool Stack::wait_ready(const std::string& name, const std::string& host, int por
         const pid_t pid = pid_of(name);
         int status = 0;
         ::waitpid(pid, &status, WNOHANG);
-        if (!pid_alive(pid)) { out_.bad(name + " died", "— ariadne doctor logs " + name); return false; }
+        if (!pid_alive(pid)) { out_.bad(name + " died", "— ariadne limbo logs " + name); return false; }
         if (health_ok(host, port)) { out_.ok(name + " up on " + host + ":" + std::to_string(port)); return true; }
         nap(2.0);
     }
-    out_.bad(name + " did not answer within " + std::to_string(seconds) + "s", "— ariadne doctor logs " + name);
+    out_.bad(name + " did not answer within " + std::to_string(seconds) + "s", "— ariadne limbo logs " + name);
     return false;
 }
 
@@ -361,9 +361,9 @@ std::pair<std::string, std::string> Stack::profile_model(const StackConf& c, con
     }
     if (profile == "a3b") {
         const auto [repo, file] = a3b_repo_file(c);
-        return {model_path(repo, file, paths_), "ariadne doctor setup"};
+        return {model_path(repo, file, paths_), "ariadne limbo setup"};
     }
-    return {model_path(c.str("MAIN_REPO"), c.str("MAIN_FILE"), paths_), "ariadne doctor setup"};
+    return {model_path(c.str("MAIN_REPO"), c.str("MAIN_FILE"), paths_), "ariadne limbo setup"};
 }
 
 std::string Stack::mmproj(const StackConf& c) const {
@@ -432,7 +432,7 @@ std::vector<std::string> Stack::main_argv(const StackConf& c, const std::string&
         a.insert(a.end(), {"--spec-type", "draft-mtp,ngram-mod", "--spec-draft-n-max", "2",
                            "--spec-ngram-mod-n-match", "24", "--spec-ngram-mod-n-min", "24",
                            "--spec-ngram-mod-n-max", "32"});
-        if (!draft_repo.empty() || !draft_file.empty()) out_.warn("DFlash2 draft model missing", "— run: ariadne doctor setup");
+        if (!draft_repo.empty() || !draft_file.empty()) out_.warn("DFlash2 draft model missing", "— run: ariadne limbo setup");
         out_.dim("speculative: MTP + ngram-mod (no draft model configured)");
     }
     const std::string projector = mmproj(c);
@@ -445,12 +445,12 @@ std::vector<std::string> Stack::main_argv(const StackConf& c, const std::string&
             out_.dim("vision: " + base(projector));
         } else {
             out_.warn("MAIN_VISION=1 but no projector", "— vision calls will 500");
-            out_.note("fetch it with: ariadne doctor setup");
+            out_.note("fetch it with: ariadne limbo setup");
         }
     } else if (present) {
         out_.dim("vision: off (MAIN_VISION=0) — projector present, set MAIN_VISION=1 to use it");
     } else {
-        out_.note("vision: off — no projector fetched either (ariadne doctor setup to get one)");
+        out_.note("vision: off — no projector fetched either (ariadne limbo setup to get one)");
     }
     return a;
 }
@@ -494,7 +494,7 @@ std::vector<std::string> Stack::a3b_argv(const StackConf& c, const std::string& 
             a.insert(a.end(), {"-mm", projector, "--no-mmproj-offload", "--image-min-tokens", "1024", "--image-max-tokens", "2048"});
             out_.dim("vision: " + base(projector));
         } else {
-            out_.warn("A3B_VISION=1 but the a3b projector is missing", "— run: ariadne doctor setup");
+            out_.warn("A3B_VISION=1 but the a3b projector is missing", "— run: ariadne limbo setup");
         }
     }
     return a;
@@ -584,27 +584,27 @@ int Stack::cmd_report() const {
 
     out_.section("Inference sources");
     if (fs::is_directory(c.llama_dir() / ".git", ec)) out_.ok("llama.cpp at " + c.llama_dir().string());
-    else out_.bad("llama.cpp missing", "— run: ariadne doctor setup");
+    else out_.bad("llama.cpp missing", "— run: ariadne limbo setup");
     if (::access(c.server().c_str(), X_OK) == 0) out_.ok("llama-server built");
-    else out_.bad("llama-server not built", "— run: ariadne doctor setup");
+    else out_.bad("llama-server not built", "— run: ariadne limbo setup");
 
     out_.section("Local models");
     const std::string main_model = model_path(c.str("MAIN_REPO"), c.str("MAIN_FILE"), paths_);
     if (!main_model.empty()) out_.ok("main (dense): " + base(main_model), "(" + human_size(main_model) + ")");
-    else out_.bad("main model missing", "— run: ariadne doctor setup");
+    else out_.bad("main model missing", "— run: ariadne limbo setup");
     const std::string a3b = profile_model(c, "a3b").first;
-    if (!a3b.empty()) out_.ok("main (a3b):   " + base(a3b), "(" + human_size(a3b) + ") — ariadne doctor start a3b");
-    else out_.dim("main (a3b): not downloaded — ariadne doctor setup");
+    if (!a3b.empty()) out_.ok("main (a3b):   " + base(a3b), "(" + human_size(a3b) + ") — ariadne limbo start a3b");
+    else out_.dim("main (a3b): not downloaded — ariadne limbo setup");
     if (c.enabled("aux")) {
         const std::string aux = model_path(c.str("AUX_REPO"), c.str("AUX_FILE"), paths_);
         if (!aux.empty()) out_.ok("aux:  " + base(aux), "(" + human_size(aux) + ")");
-        else out_.bad("aux model missing", "— run: ariadne doctor setup");
+        else out_.bad("aux model missing", "— run: ariadne limbo setup");
     }
     const std::string draft_repo = c.str("MAIN_DRAFT_REPO"), draft_file = c.str("MAIN_DRAFT_FILE");
     if (!draft_repo.empty() || !draft_file.empty()) {
         const std::string d = draft_file.empty() ? "" : model_path(draft_repo, draft_file, paths_);
         if (!d.empty()) out_.ok("draft (DFlash2): " + base(d), "(" + human_size(d) + ")");
-        else out_.bad("DFlash2 draft model configured but missing", "— run: ariadne doctor setup");
+        else out_.bad("DFlash2 draft model configured but missing", "— run: ariadne limbo setup");
     } else {
         out_.warn("no DFlash2 draft model configured", "— running MTP + ngram-mod instead");
     }
@@ -693,7 +693,7 @@ int Stack::cmd_setup() const {
     if (!missing.empty()) {
         std::string list;
         for (const auto& m : missing) list += (list.empty() ? "" : ", ") + m;
-        out_.bad("cannot build llama.cpp", "— missing: " + list + "; install it and rerun: ariadne doctor setup");
+        out_.bad("cannot build llama.cpp", "— missing: " + list + "; install it and rerun: ariadne limbo setup");
         return 1;
     }
     if (!fs::is_directory(c.llama_dir() / ".git", ec)) {
@@ -757,13 +757,13 @@ int Stack::cmd_setup() const {
     }
     // fetched beforehand, so a nightly pass never finds it missing
     if (afe::enabled(c) && !fetch(afe::get(c, "AFE_REPO"), afe::get(c, "AFE_FILE"), "AFE (mazemaker)")) {
-        out_.bad("AFE model download failed", "— retry: ariadne doctor afe fetch");
+        out_.bad("AFE model download failed", "— retry: ariadne limbo afe fetch");
         return 1;
     }
     const auto [ar, af] = a3b_repo_file(c);
-    if (!fetch(ar, af, "a3b (doctor start a3b)")) out_.warn("a3b model download failed", "— `ariadne doctor start a3b` stays unavailable");
+    if (!fetch(ar, af, "a3b (limbo start a3b)")) out_.warn("a3b model download failed", "— `ariadne limbo start a3b` stays unavailable");
     out_.line("");
-    out_.ok("setup complete", "— ariadne doctor start");
+    out_.ok("setup complete", "— ariadne limbo start");
     return 0;
 }
 
@@ -771,19 +771,19 @@ int Stack::cmd_start(const std::string& requested) const {
     const StackConf c = conf();
     const std::string profile = requested.empty() ? default_profile(c) : requested;
     if (profile != "strata" && ::access(c.server().c_str(), X_OK) != 0) {
-        out_.bad("llama-server not built", "— run: ariadne doctor setup");
+        out_.bad("llama-server not built", "— run: ariadne limbo setup");
         return 1;
     }
     const auto [model, how] = profile_model(c, profile);
     if (model.empty()) { out_.bad(profile + " model missing", "— run: " + how); return 1; }
     const std::string current = running_profile();
     if (state_of("main") != "stopped" && !current.empty() && current != profile) {
-        out_.bad("main is already serving " + current + " — never two models", "— switch with: ariadne doctor restart " + profile);
+        out_.bad("main is already serving " + current + " — never two models", "— switch with: ariadne limbo restart " + profile);
         return 1;
     }
     if (afe::serving(*this, c)) {
         const auto [h, p] = afe::host_port(c);
-        out_.bad("AFE model is serving on " + h + ":" + std::to_string(p) + " — never two models", "— stop it first: ariadne doctor afe stop");
+        out_.bad("AFE model is serving on " + h + ":" + std::to_string(p) + " — never two models", "— stop it first: ariadne limbo afe stop");
         return 1;
     }
     out_.section("Starting (" + profile + ")");
@@ -824,7 +824,7 @@ int Stack::cmd_start(const std::string& requested) const {
         const std::string vis = model_path(c.str("VIS_REPO"), c.str("VIS_FILE"), paths_);
         const std::string vmm = model_path(c.str("VIS_REPO"), c.str("VIS_MMPROJ_FILE"), paths_);
         if (vis.empty() || vmm.empty()) {
-            out_.warn("VIS_ENABLED=1 but model/projector missing", "— run: ariadne doctor setup");
+            out_.warn("VIS_ENABLED=1 but model/projector missing", "— run: ariadne limbo setup");
         } else {
             const auto [vh, vp] = c.host_port("vis");
             Launch vl;
@@ -875,7 +875,7 @@ int signal_all(const Stack& s, int sig, const std::string& verb) {
 
 int Stack::cmd_pause() const {
     const int r = signal_all(*this, SIGSTOP, "paused");
-    out_.note("weights stay loaded; resume with: ariadne doctor resume");
+    out_.note("weights stay loaded; resume with: ariadne limbo resume");
     return r;
 }
 
@@ -1004,7 +1004,7 @@ int Stack::cmd_watch(double threshold, double interval, int trips_needed, double
              + std::to_string(trips_needed) + " consecutive " + fmtg(interval) + "s windows · cooldown " + fmtg(cooldown) + "s");
     if (!port_up(host, port)) { out_.bad("main server is not up", "— nothing to watch"); return 1; }
     auto prev = scrape(host, port);
-    if (prev.empty()) { out_.bad("/metrics returned nothing", "— the server needs --metrics (ariadne doctor start passes it)"); return 1; }
+    if (prev.empty()) { out_.bad("/metrics returned nothing", "— the server needs --metrics (ariadne limbo start passes it)"); return 1; }
     std::signal(SIGINT, on_sigint);
     int trips = 0;
     double last_restart = 0;
@@ -1044,5 +1044,5 @@ int Stack::cmd_watch(double threshold, double interval, int trips_needed, double
     return 0;
 }
 
-}  // namespace doctor
+}  // namespace limbo
 }  // namespace dd

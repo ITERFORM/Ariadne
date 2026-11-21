@@ -1,6 +1,6 @@
-// src/doctor/stack_conf.cpp — stack.conf parsing, defaults, model lookup, thread budget.
+// src/limbo/stack_conf.cpp — stack.conf parsing, defaults, model lookup, thread budget.
 // py: daedalus_cli/stack.py (DEFAULT_CONF, _parse_conf, StackConf, model_path, gguf_str).
-#include "dd/doctor/stack_conf.hpp"
+#include "dd/limbo/stack_conf.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -18,9 +18,9 @@
 namespace fs = std::filesystem;
 
 namespace dd {
-namespace doctor {
+namespace limbo {
 
-const char* const kDefaultConf = R"CONF(# Ariadne's local inference stack: `ariadne doctor`. Paths are absolute; ~ and
+const char* const kDefaultConf = R"CONF(# Ariadne's local inference stack: `ariadne limbo`. Paths are absolute; ~ and
 # $HOME / $ARIADNE_HOME are expanded on load. Nothing here is executed.
 
 # --- the llama.cpp fork -------------------------------------------------------
@@ -35,7 +35,7 @@ MAIN_REPO="ISTA-DASLab/Qwen3.8-27B-GSQ-RCO-GGUF"
 MAIN_FILE="Qwen3.8-27B-GSQ-RCO-IQ3_XXS-mtp.gguf"
 MAIN_PORT=8080
 MAIN_HOST="127.0.0.1"
-# What a bare `ariadne doctor start` serves: dense (llama.cpp, fits the smallest
+# What a bare `ariadne limbo start` serves: dense (llama.cpp, fits the smallest
 # box), a3b (the MoE below) or strata (needs a Strata checkout, see below).
 MAIN_PROFILE="dense"
 # One -kvu pool shared by every slot; MAIN_SLOT_CTX is each slot's own ceiling.
@@ -68,7 +68,7 @@ MAIN_CTV="q4_0"
 # Slots. -kvu is added whenever MAIN_KV_POOL is set with more than one slot;
 # slot 0 is the sidekick, slot 1 the main conversation. A fork build without
 # multi-slot streaming refuses with "requires exactly one sequence (-np 1)":
-# rebuild it with `ariadne doctor setup`.
+# rebuild it with `ariadne limbo setup`.
 MAIN_SLOTS=3
 # Only for MAIN_SLOTS>1 with MAIN_KV_POOL empty.
 MAIN_KV_UNIFIED=0
@@ -118,7 +118,7 @@ VIS_CTX=16384
 VIS_THREADS=4
 
 # --- profile a3b --------------------------------------------------------------------
-# `ariadne doctor start a3b`: a 35B-A3B MoE on MAIN_PORT. Empty REPO/FILE serves
+# `ariadne limbo start a3b`: a 35B-A3B MoE on MAIN_PORT. Empty REPO/FILE serves
 # the AFE file. Small KV, no streaming; the lever is how many layers' experts stay
 # in RAM. 16 GB card, UD-Q4_K_M: n-cpu-moe 20 -> pp 402 / tg 49 tok/s, 16 -> 465 / 53.
 A3B_REPO="peculiar-ragdoll/Cyber-Tiel-Coder-35B-A3B-GGUF-MTP"
@@ -131,12 +131,12 @@ A3B_BATCH=2048
 A3B_UBATCH=2048
 
 # --- profile strata ------------------------------------------------------------------
-# `ariadne doctor start strata`: the coder MoE through a Strata checkout.
+# `ariadne limbo start strata`: the coder MoE through a Strata checkout.
 STRATA_DIR="$HOME/projects/strata-origin-upstream"
 STRATA_CONFIG="strata-coder-iq1_m.json"
 
 # --- mazemaker AFE model --------------------------------------------------------------
-# mazemaker's fact extraction calls an LLM on :8888. `ariadne doctor afe` serves
+# mazemaker's fact extraction calls an LLM on :8888. `ariadne limbo afe` serves
 # it, only ever as the ONLY model on the card: it refuses beside main/aux/vis or
 # above AFE_VRAM_BLOCK_MIB in use, and `start` refuses while it is up.
 AFE_ENABLED=1
@@ -472,5 +472,5 @@ std::string human_size(const std::string& path) {
     return "?";
 }
 
-}  // namespace doctor
+}  // namespace limbo
 }  // namespace dd

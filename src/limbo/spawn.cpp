@@ -53,7 +53,7 @@ int open_sink(const std::string& path, std::string& error) {
     if (path.empty()) return ::open("/dev/null", O_WRONLY);
     const int fd = ::open(path.c_str(), O_WRONLY | O_CREAT | O_APPEND, 0600);
     if (fd >= 0) return fd;
-    // A log the level cannot open is not a reason to refuse a dweller: stderr still has
+    // A log limbo cannot open is not a reason to refuse a server: stderr still has
     // somewhere to go, and the reason is said once.
     error = "stderr log " + path + ": " + std::string(std::strerror(errno)) + "; going to /dev/null";
     return ::open("/dev/null", O_WRONLY);
@@ -71,8 +71,8 @@ int spawn_one(const std::string& exe, const std::vector<char*>& args, const std:
     const int log_fd = stdio.log_fd >= 0 ? stdio.log_fd : ::open("/dev/null", O_WRONLY);
     if (log_fd >= 0) ::posix_spawn_file_actions_adddup2(&fa, log_fd, 2);
     ::posix_spawn_file_actions_addclosefrom_np(&fa, 3);
-    // The dweller's working directory is part of its identity: a model path written relative
-    // to the level's cwd would load a different file than the same command run by hand.
+    // The server's working directory is part of its identity: a model path written relative
+    // to limbo's cwd would load a different file than the same command run by hand.
     if (!cwd.empty()) ::posix_spawn_file_actions_addchdir_np(&fa, cwd.c_str());
     posix_spawnattr_t at;
     ::posix_spawnattr_init(&at);
@@ -174,8 +174,8 @@ bool settle_exit(pid_t pid, long grace_ms, int& status) {
         const ssize_t seen = ::waitpid(pid, &status, WNOHANG);
         if (seen == pid) return true;
         // An error means there is no such child: somebody else already reaped it. Spending the
-        // whole grace on a pid that is gone would make every death cost the grace, and a dweller
-        // that is already gone is not a dweller worth waiting for.
+        // whole grace on a pid that is gone would make every death cost the grace, and a server
+        // that is already gone is not a server worth waiting for.
         if (seen < 0) return false;
         core::park(idle, 0, kWaitStep);
     }
@@ -189,7 +189,7 @@ int end_process(pid_t pid, long grace_ms, std::string& error) {
     if (settle_exit(pid, grace_ms, status)) return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
     ::kill(pid, SIGKILL);
     ::waitpid(pid, &status, 0);
-    error = "the dweller needed SIGKILL to end";
+    error = "the server needed SIGKILL to end";
     return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
 }
 

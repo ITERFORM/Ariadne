@@ -132,6 +132,7 @@ static void test_starters() {
         {"never-touch-live-pods", "systemctl --user restart mazemaker-pod.service", "systemctl --user status mazemaker-pod.service"},
         {"ask-before-heavy-launches", "./llama-server -m x.gguf", "make build/ariadne"},
         {"ask-before-heavy-launches", "make test", "echo testing"},
+        {"ask-before-heavy-launches", "ariadne limbo restart strata", "ariadne limbo status"},
     };
     for (const auto& c : cases) {
         Tripwires one;

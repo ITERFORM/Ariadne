@@ -225,7 +225,7 @@ std::vector<std::pair<std::string, std::string>> Tripwires::starter_rules() {
          "---\nname: never-touch-live-pods\ndescription: live pods and postgres are off limits\ncondition: '(?i)podman\\s+(rm|stop|kill|restart|rmi|system\\s+reset|pod\\s+(rm|stop|kill|restart))\\b|systemctl\\s+(--user\\s+)?(stop|restart|disable|kill)\\s+\\S*(postgres|mazemaker|wonderland|pod)'\nscope: tool:run_terminal\nrepeat_gap: 40\n---\n"
          "These are the live pods and the postgres database. Do not stop, restart, remove or rebuild them while debugging: say what you would change and ask first.\n"},
         {"ask-before-heavy-launches.md",
-         "---\nname: ask-before-heavy-launches\ndescription: heavy launches need a yes\ncondition: '(?i)\\b(llama-server|llama-cli|daedalus\\s+doctor\\s+(start|restart|stop)|make\\s+test)\\b'\nscope: tool:run_terminal\nrepeat_gap: 40\n---\n"
+         "---\nname: ask-before-heavy-launches\ndescription: heavy launches need a yes\ncondition: '(?i)\\b(llama-server|llama-cli|(daedalus\\s+doctor|ariadne\\s+limbo)\\s+(start|restart|stop)|make\\s+test)\\b'\nscope: tool:run_terminal\nrepeat_gap: 40\n---\n"
          "Model servers, engine restarts and full test suites are heavy on this workstation: ask the operator for a yes first, then run it.\n"},
     };
 }

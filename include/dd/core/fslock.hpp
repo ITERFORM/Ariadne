@@ -42,6 +42,17 @@ public:
             while (::flock(fd_, LOCK_EX) != 0 && errno == EINTR) {}
         }
     }
+    // Non-blocking twin: LOCK_NB, and a lock another holder already owns is not taken.
+    // The descriptor is closed again in that case, so `held()` answers exactly "this object
+    // owns the lock" — a tick that finds the tick lock busy must skip, not wait.
+    struct try_lock_t {};
+    FileLock(const std::filesystem::path& path, try_lock_t)
+        : fd_(::open(path.c_str(), O_CREAT | O_RDWR | O_CLOEXEC, 0600)) {
+        if (fd_ >= 0) {
+            ::fchmod(fd_, 0600);
+            if (::flock(fd_, LOCK_EX | LOCK_NB) != 0) { ::close(fd_); fd_ = -1; }   // EWOULDBLOCK or any failure: held elsewhere
+        }
+    }
     ~FileLock() {
         if (fd_ >= 0) {
             ::flock(fd_, LOCK_UN);

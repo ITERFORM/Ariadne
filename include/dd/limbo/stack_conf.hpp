@@ -1,8 +1,8 @@
 #pragma once
-// dd/doctor/stack_conf.hpp — stack.conf: the local inference stack's knobs.
+// dd/limbo/stack_conf.hpp — stack.conf: the local inference stack's knobs.
 //
 // Shell syntax because it predates this port and is read by hand, but parsed, never sourced:
-// running the doctor must never execute whatever a conf file happens to contain. It lives in
+// running limbo must never execute whatever a conf file happens to contain. It lives in
 // the ariadne home; a conf the Python doctor left in ~/.daedalus is imported once, so a
 // machine's measured numbers survive the move.
 
@@ -13,7 +13,7 @@
 #include <utility>
 
 namespace dd {
-namespace doctor {
+namespace limbo {
 
 using Values = std::map<std::string, std::string>;
 
@@ -80,5 +80,5 @@ bool patch_threads(std::string& text, int main_t, int aux_t, int vis_t);
 std::string gguf_value(const std::string& path, const std::string& key);
 std::string human_size(const std::string& path);
 
-}  // namespace doctor
+}  // namespace limbo
 }  // namespace dd

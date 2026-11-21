@@ -1,24 +1,24 @@
 #pragma once
-// dd/doctor/afe.hpp — mazemaker's AFE model on :8888, owned by the doctor like every model.
+// dd/limbo/afe.hpp — mazemaker's AFE model on :8888, owned by limbo like every model.
 //
 // mazemaker's fact extraction (AFE Stage C) calls an LLM on the host. The pod cannot run host
 // commands: it drops ~/.mazemaker/sockets/llm-on-demand.request, and a systemd path unit calls
-// `ariadne doctor afe wake`. A refusal or a failed load is written to llm-on-demand.failed, so
+// `ariadne limbo afe wake`. A refusal or a failed load is written to llm-on-demand.failed, so
 // the caller in the pod fails at once with the reason instead of polling a port that will
 // never open. The idle timer calls `afe idle-check`.
 //
 // Never two models: AFE does not start while main/aux/vis serve, or when the card already has
-// more than AFE_VRAM_BLOCK_MIB in use; `ariadne doctor start` refuses while AFE serves.
+// more than AFE_VRAM_BLOCK_MIB in use; `ariadne limbo start` refuses while AFE serves.
 
 #include <filesystem>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include "dd/doctor/stack.hpp"
+#include "dd/limbo/stack.hpp"
 
 namespace dd {
-namespace doctor {
+namespace limbo {
 namespace afe {
 
 constexpr const char* kName = "afe";
@@ -59,5 +59,5 @@ int cmd_wake(const Stack& s);
 int cmd_idle_check(const Stack& s);
 
 }  // namespace afe
-}  // namespace doctor
+}  // namespace limbo
 }  // namespace dd

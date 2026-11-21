@@ -48,8 +48,9 @@ long now_s() {
 
 }  // namespace
 
-ChatApi::ChatApi(ApiInfo info, std::string api_key, TurnRunner& runner)
-    : info_(std::move(info)), api_key_(std::move(api_key)), runner_(runner) {}
+ChatApi::ChatApi(ApiInfo info, std::string api_key, TurnRunner& runner, std::atomic<bool>* claim)
+    : info_(std::move(info)), api_key_(std::move(api_key)), runner_(runner),
+      claim_(claim ? claim : &own_claim_) {}
 
 bool ChatApi::authorized(const net::Request& req) const {
     return api_key_.empty() || req.header("authorization") == "Bearer " + api_key_;
@@ -199,7 +200,7 @@ void ChatApi::chat(const net::Request& req, net::Conn& conn) {
     const bool stream = stream_flag && stream_flag->type == Json::Bool && stream_flag->b;
 
     bool expected = false;
-    if (!busy_.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
+    if (!claim_->compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
         conn.json(409, error_body("ariadne is in a turn; one turn at a time", "busy"));
         return;
     }
@@ -210,7 +211,7 @@ void ChatApi::chat(const net::Request& req, net::Conn& conn) {
             s.store(nullptr, std::memory_order_release);
             b.store(false, std::memory_order_release);
         }
-    } release{busy_, stream_};
+    } release{*claim_, stream_};
     runner_.claimed(req);
 
     created_ = now_s();

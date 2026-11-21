@@ -47,6 +47,8 @@ TAPE := src/agent/payload_tape.cpp
 CRON := src/cron/schedule.cpp
 COREHOME := src/core/home.cpp
 CRON_JOBS := src/cron/jobs.cpp
+CRON_RUNNER := src/cron/runner.cpp
+CRON_EXEC := src/cron/executor.cpp
 STICKER := src/gateway/sticker_cache.cpp
 PAIRING := src/gateway/pairing.cpp
 PATH_SEC := src/tools/path_security.cpp
@@ -76,12 +78,8 @@ SERVE := src/net/server.cpp src/serve/chat_api.cpp
 GWDEV := src/gateway/crypto.cpp src/gateway/identity.cpp src/gateway/devices.cpp src/gateway/device_gateway.cpp src/gateway/relay.cpp src/gateway/cli.cpp
 HTTPLLM := src/agent/http_llm.cpp $(RETRY) $(URLSAFE)   # the wire's send policy lives in retry.cpp
 CONTEXT := src/context/tape.cpp src/context/render.cpp src/context/endpoint.cpp src/context/maze.cpp src/context/deck.cpp src/context/engine.cpp src/context/recall.cpp src/context/plan.cpp
-# The limbo level: the harness's own inference engine. One front, the dwellers it admits, and
-# no Python holding the pipe open. server.cpp/http.cpp ride along because the level speaks HTTP
-# on a socket and proxies a llama-server over curl.
-DOCTOR := src/doctor/stack_conf.cpp src/doctor/stack.cpp src/doctor/afe.cpp src/doctor/bench.cpp src/doctor/doctor_main.cpp
-LIMBO := src/limbo/shade.cpp src/limbo/spawn.cpp src/limbo/charon.cpp src/limbo/shade_strata.cpp src/limbo/shade_llama.cpp \
-         src/limbo/minos.cpp src/limbo/level.cpp src/net/http.cpp src/net/server.cpp $(CORE) $(URLSAFE)
+# `ariadne limbo`: the machine's own inference stack (setup, start/stop, bench, the AFE model).
+LIMBO := src/limbo/stack_conf.cpp src/limbo/stack.cpp src/limbo/afe.cpp src/limbo/bench.cpp src/limbo/limbo_main.cpp src/limbo/spawn.cpp
 MCPSCHEMA := src/tools/mcp_schema_cache.cpp $(SHA256)   # the staleness key is a sha256 of the config
 MCP := src/tools/mcp_client.cpp src/tools/slash_args.cpp src/tools/tool_help.cpp $(URLSAFE)
 DELEG := src/tools/delegation_output_schema.cpp
@@ -193,8 +191,8 @@ install: $(BUILD)/ariadne-install
 install-all: $(BUILD)/ariadne-install
 	@$< --booted --root . --home $(INSTALL_DIR) --agent --cli
 
-$(BUILD)/ariadne: $(SERVE) $(GWDEV) $(CORE) $(COREHOME) $(HOMEINIT) $(KNOWDEP) $(TOOLS) $(TOOLRUN) $(DELEGATE) $(VISION) $(TOOLLIMITS) $(THINTS) $(APPLY) $(PROVENANCE) $(ANSI) $(INTERRUPT) $(AGENT) $(CONFIG) $(MCP) $(MCPSCHEMA) $(TSEARCH) $(NET) $(HTTPLLM) $(CONTEXT) $(LIMBO) $(DOCTOR) $(UI) $(ENV) $(wildcard include/dd/*.hpp include/dd/*/*.hpp) src/dd_tui.cpp
-	$(CXX) $(CXXFLAGS) -fopenmp $(sort $(LEARN) $(CORE) $(COREHOME) $(HOMEINIT) $(KNOWDEP) $(TOOLS) $(TOOLRUN) $(DELEGATE) $(VISION) $(TOOLLIMITS) $(THINTS) $(PATCH) $(FUZZY) $(APPLY) $(PROVENANCE) $(ANSI) $(INTERRUPT) $(AGENT) $(CONFIG) $(MCP) $(MCPSCHEMA) $(TSEARCH) $(NET) $(HTTPLLM) $(CONTEXT) $(LIMBO) $(DOCTOR) $(UI) $(SERVE) $(GWDEV) $(ENV)) src/dd_tui.cpp -pthread $(CURL_LIBS) $(TLS_LIBS) -o $(BUILD)/ariadne
+$(BUILD)/ariadne: $(SERVE) $(GWDEV) $(CORE) $(COREHOME) $(HOMEINIT) $(KNOWDEP) $(TOOLS) $(TOOLRUN) $(DELEGATE) $(VISION) $(TOOLLIMITS) $(THINTS) $(APPLY) $(PROVENANCE) $(ANSI) $(INTERRUPT) $(AGENT) $(CONFIG) $(MCP) $(MCPSCHEMA) $(TSEARCH) $(NET) $(HTTPLLM) $(CONTEXT) $(LIMBO) $(UI) $(ENV) $(CRON) $(CRON_JOBS) $(CRON_RUNNER) $(CRON_EXEC) $(wildcard include/dd/*.hpp include/dd/*/*.hpp) src/dd_tui.cpp
+	$(CXX) $(CXXFLAGS) -fopenmp $(sort $(LEARN) $(CORE) $(COREHOME) $(HOMEINIT) $(KNOWDEP) $(TOOLS) $(TOOLRUN) $(DELEGATE) $(VISION) $(TOOLLIMITS) $(THINTS) $(PATCH) $(FUZZY) $(APPLY) $(PROVENANCE) $(ANSI) $(INTERRUPT) $(AGENT) $(CONFIG) $(MCP) $(MCPSCHEMA) $(TSEARCH) $(NET) $(HTTPLLM) $(CONTEXT) $(LIMBO) $(UI) $(SERVE) $(GWDEV) $(ENV) $(CRON) $(CRON_JOBS) $(CRON_RUNNER) $(CRON_EXEC)) src/dd_tui.cpp -pthread $(CURL_LIBS) $(TLS_LIBS) -o $(BUILD)/ariadne
 
 # The shipped binary itself, under ASan+UBSan. Every sanitizer target so far is a module
 # test: none of them ever runs ariadne's own startup, home resolution, argument parsing,
@@ -206,11 +204,11 @@ $(BUILD)/ariadne: $(SERVE) $(GWDEV) $(CORE) $(COREHOME) $(HOMEINIT) $(KNOWDEP) $
 # process exit and keeps the port. How long the PROCESS takes to leave is a sanitizer cost, not a gateway defect:
 # under host memory pressure it is LeakSanitizer scanning shadow memory at exit (7.8s measured, 2503 leaks at 2.42
 # MB of shadow, ~13.2 GB RSS), which a single ceiling once reported as "ignored SIGTERM".
-$(BUILD)/ariadne_asan: $(SERVE) $(GWDEV) $(CORE) $(COREHOME) $(HOMEINIT) $(KNOWDEP) $(TOOLS) $(TOOLRUN) $(DELEGATE) $(VISION) $(TOOLLIMITS) $(THINTS) $(APPLY) $(PROVENANCE) $(ANSI) $(INTERRUPT) $(AGENT) $(CONFIG) $(MCP) $(MCPSCHEMA) $(TSEARCH) $(NET) $(HTTPLLM) $(CONTEXT) $(LIMBO) $(DOCTOR) $(UI) $(ENV) $(wildcard include/dd/*.hpp include/dd/*/*.hpp) src/dd_tui.cpp
+$(BUILD)/ariadne_asan: $(SERVE) $(GWDEV) $(CORE) $(COREHOME) $(HOMEINIT) $(KNOWDEP) $(TOOLS) $(TOOLRUN) $(DELEGATE) $(VISION) $(TOOLLIMITS) $(THINTS) $(APPLY) $(PROVENANCE) $(ANSI) $(INTERRUPT) $(AGENT) $(CONFIG) $(MCP) $(MCPSCHEMA) $(TSEARCH) $(NET) $(HTTPLLM) $(CONTEXT) $(LIMBO) $(UI) $(ENV) $(CRON) $(CRON_JOBS) $(CRON_RUNNER) $(CRON_EXEC) $(wildcard include/dd/*.hpp include/dd/*/*.hpp) src/dd_tui.cpp
 	# -O1 with sanitizers makes GCC trace through libstdc++'s <regex> NFA and report a
 	# maybe-uninitialized inside std::function: a compiler false positive in the standard library,
 	# not a dd bug. The TSan targets already suppress the same diagnostic.
-	$(CXX) $(CXXFLAGS) -fopenmp -O1 -g -Wno-maybe-uninitialized -fsanitize=address,undefined $(sort $(LEARN) $(CORE) $(COREHOME) $(HOMEINIT) $(KNOWDEP) $(TOOLS) $(TOOLRUN) $(DELEGATE) $(VISION) $(TOOLLIMITS) $(THINTS) $(PATCH) $(FUZZY) $(APPLY) $(PROVENANCE) $(ANSI) $(INTERRUPT) $(AGENT) $(CONFIG) $(MCP) $(MCPSCHEMA) $(TSEARCH) $(NET) $(HTTPLLM) $(CONTEXT) $(LIMBO) $(DOCTOR) $(UI) $(SERVE) $(GWDEV) $(ENV)) src/dd_tui.cpp -pthread $(CURL_LIBS) $(TLS_LIBS) -o $(BUILD)/ariadne_asan
+	$(CXX) $(CXXFLAGS) -fopenmp -O1 -g -Wno-maybe-uninitialized -fsanitize=address,undefined $(sort $(LEARN) $(CORE) $(COREHOME) $(HOMEINIT) $(KNOWDEP) $(TOOLS) $(TOOLRUN) $(DELEGATE) $(VISION) $(TOOLLIMITS) $(THINTS) $(PATCH) $(FUZZY) $(APPLY) $(PROVENANCE) $(ANSI) $(INTERRUPT) $(AGENT) $(CONFIG) $(MCP) $(MCPSCHEMA) $(TSEARCH) $(NET) $(HTTPLLM) $(CONTEXT) $(LIMBO) $(UI) $(SERVE) $(GWDEV) $(ENV) $(CRON) $(CRON_JOBS) $(CRON_RUNNER) $(CRON_EXEC)) src/dd_tui.cpp -pthread $(CURL_LIBS) $(TLS_LIBS) -o $(BUILD)/ariadne_asan
 
 # Walks that binary through the paths a module test never touches. Needs a backend for
 # the turn and the serve bind; without one those two probes skip and say so.
@@ -294,6 +292,13 @@ $(BUILD)/dd_cron_tests: $(CORE) $(SKILLS) $(TOOLS) $(AGENT) $(CONFIG) $(GATEWAY)
 
 $(BUILD)/dd_cron_jobs_tests: $(CORE) $(COREHOME) $(SKILLS) $(TOOLS) $(AGENT) $(CONFIG) $(GATEWAY) $(RETRY) $(CLASSIFICATION) $(PROMPT_CACHE) $(BOUNDARY) $(TAPE) $(CRON) $(CRON_JOBS) tests/cron_jobs_test.cpp
 	$(CXX) $(CXXFLAGS) $(CORE) $(COREHOME) $(SKILLS) $(TOOLS) $(AGENT) $(CONFIG) $(GATEWAY) $(RETRY) $(CLASSIFICATION) $(PROMPT_CACHE) $(BOUNDARY) $(TAPE) $(CRON) $(CRON_JOBS) tests/cron_jobs_test.cpp -o $(BUILD)/dd_cron_jobs_tests
+
+CRON_ALL := $(CRON) $(CRON_JOBS) $(CRON_RUNNER) $(CRON_EXEC)
+$(BUILD)/dd_cron_runner_tests: $(CORE) $(COREHOME) $(SKILLS) $(TOOLS) $(AGENT) $(CONFIG) $(GATEWAY) $(RETRY) $(CLASSIFICATION) $(PROMPT_CACHE) $(BOUNDARY) $(TAPE) $(INTERRUPT) $(HTTPLLM) $(NET) $(CRON_ALL) tests/cron_runner_test.cpp
+	$(CXX) $(CXXFLAGS) $(sort $(CORE) $(COREHOME) $(SKILLS) $(TOOLS) $(AGENT) $(CONFIG) $(GATEWAY) $(RETRY) $(CLASSIFICATION) $(PROMPT_CACHE) $(BOUNDARY) $(TAPE) $(INTERRUPT) $(HTTPLLM) $(NET) $(CRON_ALL)) tests/cron_runner_test.cpp -pthread $(CURL_LIBS) $(TLS_LIBS) -o $(BUILD)/dd_cron_runner_tests
+
+$(BUILD)/dd_cron_runner_tsan: $(CORE) $(COREHOME) $(SKILLS) $(TOOLS) $(AGENT) $(CONFIG) $(GATEWAY) $(RETRY) $(CLASSIFICATION) $(PROMPT_CACHE) $(BOUNDARY) $(TAPE) $(INTERRUPT) $(HTTPLLM) $(NET) $(CRON_ALL) tests/cron_runner_test.cpp
+	$(CXX) $(CXXFLAGS) -pipe -g -Wno-unknown-pragmas -Wno-unused-function -Wno-unused-but-set-variable -Wno-maybe-uninitialized -fsanitize=thread $(sort $(CORE) $(COREHOME) $(SKILLS) $(TOOLS) $(AGENT) $(CONFIG) $(GATEWAY) $(RETRY) $(CLASSIFICATION) $(PROMPT_CACHE) $(BOUNDARY) $(TAPE) $(INTERRUPT) $(HTTPLLM) $(NET) $(CRON_ALL)) tests/cron_runner_test.cpp -pthread $(CURL_LIBS) $(TLS_LIBS) -o $(BUILD)/dd_cron_runner_tsan
 
 $(BUILD)/dd_sticker_tests: $(CORE) $(COREHOME) $(SKILLS) $(TOOLS) $(AGENT) $(CONFIG) $(GATEWAY) $(RETRY) $(CLASSIFICATION) $(PROMPT_CACHE) $(BOUNDARY) $(TAPE) $(CRON) $(CRON_JOBS) $(STICKER) tests/gateway_sticker_test.cpp
 	$(CXX) $(CXXFLAGS) $(CORE) $(COREHOME) $(SKILLS) $(TOOLS) $(AGENT) $(CONFIG) $(GATEWAY) $(RETRY) $(CLASSIFICATION) $(PROMPT_CACHE) $(BOUNDARY) $(TAPE) $(CRON) $(CRON_JOBS) $(STICKER) tests/gateway_sticker_test.cpp -o $(BUILD)/dd_sticker_tests
@@ -508,6 +513,7 @@ TEST_BINS := $(BUILD)/dd_tests \
   $(BUILD)/dd_agent_tape_tests \
   $(BUILD)/dd_cron_tests \
   $(BUILD)/dd_cron_jobs_tests \
+  $(BUILD)/dd_cron_runner_tests \
   $(BUILD)/dd_sticker_tests \
   $(BUILD)/dd_pairing_tests \
   $(BUILD)/dd_tools_output_envelope_tests \
@@ -598,7 +604,7 @@ TEST_BINS := $(BUILD)/dd_tests \
 
 # The race-detector list is a variable, not a hardcoded target: a level added by an mk fragment
 # adds its own racing binaries here, and `make tsan` runs whatever the tree actually contains.
-TSAN_BINS := $(BUILD)/dd_slot_ring_tsan $(BUILD)/dd_mark_set_tsan $(BUILD)/dd_ui_tsan $(BUILD)/dd_learn_credit_tsan $(BUILD)/dd_context_tsan $(BUILD)/dd_serve_concurrency_tsan $(BUILD)/dd_devices_race_tsan $(BUILD)/dd_device_gateway_tsan $(BUILD)/dd_relay_policy_tsan
+TSAN_BINS := $(BUILD)/dd_slot_ring_tsan $(BUILD)/dd_mark_set_tsan $(BUILD)/dd_ui_tsan $(BUILD)/dd_learn_credit_tsan $(BUILD)/dd_context_tsan $(BUILD)/dd_serve_concurrency_tsan $(BUILD)/dd_devices_race_tsan $(BUILD)/dd_device_gateway_tsan $(BUILD)/dd_relay_policy_tsan $(BUILD)/dd_cron_runner_tsan
 -include $(wildcard mk/*.mk)
 
 # Every hand-off in the tree is a claim about racing threads, and the tree has no lock left to hide

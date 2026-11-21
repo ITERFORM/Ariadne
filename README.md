@@ -440,11 +440,11 @@ Supported deployment patterns include:
 - OpenAI-compatible remote providers.
 - Other compatible inference services.
 
-### The local stack: `ariadne doctor`
+### The local stack: `ariadne limbo`
 
-`ariadne doctor` owns the machine's own llama.cpp servers, a port of the Python Daedalus doctor (`src/doctor/`). `setup` clones and builds the adaptive-KV llama.cpp fork (CUDA when `nvcc` is there, else the CPU) and fetches the models, through the `hf` CLI or, without it, over HTTPS into `<home>/models`. `start [dense|a3b|strata]` brings up the main server, waits for `/health` 200 from its own process, and only then the helper; `stop`, `restart`, `pause`, `resume`, `status`, `logs`, `command` (the exact launch line), `watch` (restart when generation throughput collapses) and `bench` (decode, prefill, TTFT, cache reuse and VRAM over the real HTTP API, written as a report under `<home>/bench/results`) follow. `stack.conf`, `run/` and `logs/stack/` live in the ariadne home; a `stack.conf` the Python doctor left in `~/.daedalus` is imported once.
+`ariadne limbo` owns the machine's own inference servers, a port of the Python Daedalus doctor (`src/limbo/`). `setup` clones and builds the adaptive-KV llama.cpp fork (CUDA when `nvcc` is there, else the CPU) and fetches the models, through the `hf` CLI or, without it, over HTTPS into `<home>/models`. `start [dense|a3b|strata]` brings up the main server, waits for `/health` 200 from its own process, and only then the helper; `stop`, `restart`, `pause`, `resume`, `status`, `logs`, `command` (the exact launch line), `watch` (restart when generation throughput collapses) and `bench` (decode, prefill, TTFT, cache reuse and VRAM over the real HTTP API, written as a report under `<home>/bench/results`) follow. `stack.conf`, `run/` and `logs/stack/` live in the ariadne home; a `stack.conf` the Python doctor left in `~/.daedalus` is imported once.
 
-`ariadne doctor afe` serves mazemaker's extraction model on :8888 and is never a second model on the card: it refuses beside main/aux/vis or on a card already above `AFE_VRAM_BLOCK_MIB`, and `start` refuses while it serves. mazemaker's pod asks for it through a request file; a path unit calls `ariadne doctor afe wake`, which writes the reason for a refusal where the pod reads it, and `afe idle-check` stops it after `AFE_IDLE_SECONDS` unused (`src/doctor/afe.cpp`). On the development desktop the a3b launch line `ariadne doctor command a3b` prints is byte-identical to the Python doctor's.
+`ariadne limbo afe` serves mazemaker's extraction model on :8888 and is never a second model on the card: it refuses beside main/aux/vis or on a card already above `AFE_VRAM_BLOCK_MIB`, and `start` refuses while it serves. mazemaker's pod asks for it through a request file; a path unit calls `ariadne limbo afe wake`, which writes the reason for a refusal where the pod reads it, and `afe idle-check` stops it after `AFE_IDLE_SECONDS` unused (`src/limbo/afe.cpp`). On the development desktop the a3b launch line `ariadne limbo command a3b` prints is byte-identical to the Python doctor's.
 
 ### Reasoning control
 
@@ -769,11 +769,11 @@ Ariadne is an evolving systems project. Its limitations should be as visible as 
   `make doc-audit` proves it against the link lines rather than against this sentence.
 - Performance depends on the inference backend, model, hardware, and workload.
 - The harness primarily targets OpenAI-compatible inference endpoints.
-- Its optional Limbo engine integration does not include model weights or an engine build in this repository.
+- `ariadne limbo` starts and stops local inference servers; their engines, builds and weights are not in this repository.
 
 These are engineering boundaries, not footnotes to be hidden.
 
-**Ported but not wired.** `src/agent/` (backend_kind, classification, kv_watermarks, message_sanitization, payload_tape, prompt_cache_boundary, prompt_caching, retry_utils, ssl_guard), `src/core/` (sha1), `src/cron/` (jobs, schedule), `src/gateway/` (authz_mixin, channel_directory, hooks, mirror, pairing, platform_registry, sticker_cache), `src/tools/` (audio_container, binary_extensions, browser_camofox_state, budget_config, debug_helpers, delegation_output_schema, env_passthrough, osv_package_parse, schema_sanitizer, threat_patterns, tool_backend_helpers, website_policy) — 31 of 136 `.cpp` files, each with a reason in the plan file under "Not in this plan", and each reached by its own suite in `tests/` instead of by a product binary.
+**Ported but not wired.** `src/agent/` (backend_kind, classification, kv_watermarks, message_sanitization, payload_tape, prompt_cache_boundary, prompt_caching, retry_utils, ssl_guard), `src/core/` (sha1), `src/gateway/` (authz_mixin, channel_directory, hooks, mirror, pairing, platform_registry, sticker_cache), `src/tools/` (audio_container, binary_extensions, browser_camofox_state, budget_config, debug_helpers, delegation_output_schema, env_passthrough, osv_package_parse, schema_sanitizer, threat_patterns, tool_backend_helpers, website_policy) — 29 of 141 `.cpp` files, each with a reason in the plan file under \"Not in this plan\", and each reached by its own suite in `tests/` instead of by a product binary.
 
 ---
 

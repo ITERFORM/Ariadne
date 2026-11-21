@@ -40,7 +40,10 @@ struct ApiInfo {
 
 class ChatApi {
 public:
-    ChatApi(ApiInfo info, std::string api_key, TurnRunner& runner);
+    // `claim` is the one-turn-at-a-time gate: default ChatApi's own, or the owner's shared
+    // atomic when something else runs turns beside this API (the gateway's cron ticker parks
+    // its jobs on the same word), so interactive turns and cron turns exclude each other.
+    ChatApi(ApiInfo info, std::string api_key, TurnRunner& runner, std::atomic<bool>* claim = nullptr);
 
     void handle(const net::Request& req, net::Conn& conn);
 
@@ -51,7 +54,7 @@ public:
     void on_tool_call(const std::string& id, const std::string& name, const std::string& arguments);
     void on_tool_result(const std::string& id, const std::string& content);
 
-    bool busy() const { return busy_.load(std::memory_order_acquire); }
+    bool busy() const { return claim_->load(std::memory_order_acquire); }
 
     static constexpr size_t kToolResultMax = 4000;   // a tool result travels this far, the rest is cut
 
@@ -64,7 +67,8 @@ private:
     ApiInfo info_;
     std::string api_key_;
     TurnRunner& runner_;
-    std::atomic<bool> busy_{false};
+    std::atomic<bool> own_claim_{false};
+    std::atomic<bool>* claim_;
     // Set only while a streaming turn runs, read only on that turn's thread.
     std::atomic<net::Conn*> stream_{nullptr};
     std::string turn_id_;

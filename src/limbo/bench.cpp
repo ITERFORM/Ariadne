@@ -1,5 +1,5 @@
-// src/doctor/bench.cpp — `ariadne doctor bench`. py: daedalus_cli/stack_bench.py.
-#include "dd/doctor/bench.hpp"
+// src/limbo/bench.cpp — `ariadne limbo bench`. py: daedalus_cli/stack_bench.py.
+#include "dd/limbo/bench.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -18,14 +18,14 @@
 #include <thread>
 #include <unistd.h>
 
-#include "dd/doctor/afe.hpp"
+#include "dd/limbo/afe.hpp"
 #include "dd/net/http.hpp"
 
 namespace fs = std::filesystem;
 using dd::core::Json;
 
 namespace dd {
-namespace doctor {
+namespace limbo {
 namespace bench {
 
 namespace {
@@ -675,11 +675,11 @@ int cmd_bench(const Stack& s, const Options& o) {
             if (afe::serving(s, c)) {
                 const auto [ah, ap] = afe::host_port(c);
                 s.out().bad("AFE model is serving on " + ah + ":" + std::to_string(ap) + " — never two models",
-                            "— stop it first: ariadne doctor afe stop");
+                            "— stop it first: ariadne limbo afe stop");
                 return 1;
             }
             const Launch l = s.main_launch(c, profile);
-            if (l.model.empty()) { s.out().bad(profile + " model missing", "— ariadne doctor setup, or fix stack.conf"); return 1; }
+            if (l.model.empty()) { s.out().bad(profile + " model missing", "— ariadne limbo setup, or fix stack.conf"); return 1; }
             s.out().section("Starting " + profile + " for the bench");
             if (!s.start_one("main", l)) return 1;
             std::ofstream(s.paths().run() / "main.profile", std::ios::trunc) << profile;
@@ -765,7 +765,7 @@ int cmd_bench(const Stack& s, const Options& o) {
     const auto acc = accept_rate(all);
 
     std::ostringstream md;
-    md << "# " << label << " on " << (gpu.empty() ? "unknown GPU" : gpu) << " -- `ariadne doctor bench`\n\n";
+    md << "# " << label << " on " << (gpu.empty() ? "unknown GPU" : gpu) << " -- `ariadne limbo bench`\n\n";
     md << "- **" << iso_now() << "**, profile **" << (profile.empty() ? "not started by ariadne" : profile) << "**, port **" << port << "**\n";
     md << "- engine: " << (version.empty() ? "engine unknown" : "llama.cpp " + version) << "\n";
     md << "- context: " << n_ctx << " tokens, " << n_slots << " slot(s), suite thinking " << (o.think ? "on" : "off")
@@ -896,11 +896,11 @@ int cmd_bench(const Stack& s, const Options& o) {
         s.out().dim("  stopping the server this bench started (--keep leaves it up)");
         s.stop_one("main");
     } else if (started) {
-        s.out().note("left up as asked: the model is loaded, so `ariadne doctor start` will refuse while it runs");
+        s.out().note("left up as asked: the model is loaded, so `ariadne limbo start` will refuse while it runs");
     }
     return 0;
 }
 
 }  // namespace bench
-}  // namespace doctor
+}  // namespace limbo
 }  // namespace dd

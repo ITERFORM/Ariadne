@@ -1,20 +1,20 @@
-// src/doctor/doctor_main.cpp — `ariadne doctor <command>`.
-#include "dd/doctor/doctor.hpp"
+// src/limbo/limbo_main.cpp — `ariadne limbo <command>`.
+#include "dd/limbo/limbo.hpp"
 
 #include <cstdio>
 #include <cstdlib>
 #include <unistd.h>
 
-#include "dd/doctor/afe.hpp"
-#include "dd/doctor/bench.hpp"
-#include "dd/doctor/stack.hpp"
+#include "dd/limbo/afe.hpp"
+#include "dd/limbo/bench.hpp"
+#include "dd/limbo/stack.hpp"
 
 namespace dd {
-namespace doctor {
+namespace limbo {
 
-void doctor_usage(bool to_stderr) {
+void limbo_usage(bool to_stderr) {
     std::fputs(
-        "usage: ariadne doctor [command]\n"
+        "usage: ariadne limbo [command]\n"
         "\n"
         "  (none)            the whole report: toolchain, sources, models, servers, AFE\n"
         "  status            the servers: ports, pids, VRAM\n"
@@ -48,21 +48,21 @@ bool valid_profile(const std::string& p) {
 }
 
 int bad_args(const std::string& why) {
-    std::fprintf(stderr, "ariadne doctor: %s\n", why.c_str());
-    doctor_usage(true);
+    std::fprintf(stderr, "ariadne limbo: %s\n", why.c_str());
+    limbo_usage(true);
     return 2;
 }
 
 }  // namespace
 
-int run_doctor(const std::vector<std::string>& args, const std::filesystem::path& home) {
+int run_limbo(const std::vector<std::string>& args, const std::filesystem::path& home) {
     Out out;
     out.color = ::isatty(1) != 0 && !std::getenv("NO_COLOR");
     Stack s(Paths{home}, out);
     const std::string cmd = args.empty() ? "" : args[0];
     const std::string arg1 = args.size() > 1 ? args[1] : "";
 
-    if (cmd == "-h" || cmd == "--help" || cmd == "help") { doctor_usage(false); return 0; }
+    if (cmd == "-h" || cmd == "--help" || cmd == "help") { limbo_usage(false); return 0; }
     if (cmd.empty() || cmd == "stack") return s.cmd_report();
     if (cmd == "status") return s.cmd_status();
     if (cmd == "setup") return s.cmd_setup();
@@ -148,5 +148,5 @@ int run_doctor(const std::vector<std::string>& args, const std::filesystem::path
     return bad_args("unknown command '" + cmd + "'");
 }
 
-}  // namespace doctor
+}  // namespace limbo
 }  // namespace dd

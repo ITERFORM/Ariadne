@@ -1,10 +1,10 @@
 #pragma once
-// dd/doctor/stack.hpp — the machine's own llama.cpp servers, owned by `ariadne doctor`.
+// dd/limbo/stack.hpp — the machine's own llama.cpp servers, owned by `ariadne limbo`.
 //
 //   main  the model the harness talks to (profile dense, a3b or strata), MAIN_PORT
 //   aux   a CPU helper on its own port, or slot 0 of main when it shares the port
 //   vis   an optional CPU vision endpoint
-//   afe   mazemaker's extraction model on :8888 (dd/doctor/afe.hpp), never beside the others
+//   afe   mazemaker's extraction model on :8888 (dd/limbo/afe.hpp), never beside the others
 //
 // A server is a pid file in <home>/run and a log in <home>/logs/stack. It runs in its own
 // session, so it outlives the CLI that started it.
@@ -15,10 +15,10 @@
 #include <vector>
 #include <sys/types.h>
 
-#include "dd/doctor/stack_conf.hpp"
+#include "dd/limbo/stack_conf.hpp"
 
 namespace dd {
-namespace doctor {
+namespace limbo {
 
 // The glyphs of the report: ✓ ⚠ ✗ · and ◆ section headers, coloured on a terminal.
 struct Out {
@@ -33,7 +33,7 @@ struct Out {
     void line(const std::string& text) const;
 };
 
-// ---- processes the doctor runs and waits for -----------------------------------------
+// ---- processes limbo runs and waits for -----------------------------------------------
 std::string which(const std::string& name);
 // Inherits this terminal; returns the exit code (127 when it could not run).
 int run(const std::vector<std::string>& argv, const std::string& cwd = "");
@@ -82,7 +82,7 @@ public:
     std::vector<std::string> a3b_argv(const StackConf& c, const std::string& model) const;
     std::vector<std::string> strata_argv(const StackConf& c, const std::string& cfg) const;
 
-    // `ariadne doctor <cmd>`. Each returns the process exit code.
+    // `ariadne limbo <cmd>`. Each returns the process exit code.
     int cmd_status(const StackConf* c = nullptr) const;
     int cmd_report() const;
     int cmd_setup() const;
@@ -125,5 +125,5 @@ double sample_decode_rate(const std::map<std::string, double>& prev, const std::
 // One option per line: the flag plus its value when it takes one, shell-quoted.
 std::string format_command(const Launch& l);
 
-}  // namespace doctor
+}  // namespace limbo
 }  // namespace dd
