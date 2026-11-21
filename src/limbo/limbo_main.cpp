@@ -20,7 +20,7 @@ void limbo_usage(bool to_stderr) {
         "  status            the servers: ports, pids, VRAM\n"
         "  stack             the same report (the Python doctor's name for it)\n"
         "  setup             clone and build llama.cpp, then fetch the models\n"
-        "  start [profile]   start the servers: dense, a3b or strata (default MAIN_PROFILE)\n"
+        "  start [profile]   start the servers: dense, a3b, strata or limbo (default MAIN_PROFILE)\n"
         "  stop              stop them, dependents first\n"
         "  restart [profile] stop, then start — the running profile unless one is named\n"
         "  pause | resume    freeze them with the weights loaded / unfreeze\n"
@@ -67,7 +67,7 @@ int run_limbo(const std::vector<std::string>& args, const std::filesystem::path&
     if (cmd == "status") return s.cmd_status();
     if (cmd == "setup") return s.cmd_setup();
     if (cmd == "start" || cmd == "restart" || cmd == "command") {
-        if (!arg1.empty() && !valid_profile(arg1)) return bad_args("unknown profile '" + arg1 + "' (dense, a3b, strata)");
+        if (!arg1.empty() && !valid_profile(arg1)) return bad_args("unknown profile '" + arg1 + "' (dense, a3b, strata, limbo)");
         if (cmd == "start") return s.cmd_start(arg1);
         if (cmd == "restart") return s.cmd_restart(arg1);
         return s.cmd_command(arg1);

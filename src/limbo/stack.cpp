@@ -31,7 +31,7 @@ namespace dd {
 namespace limbo {
 
 const char* const kServers[3] = {"main", "aux", "vis"};
-const char* const kProfiles[3] = {"dense", "a3b", "strata"};
+const char* const kProfiles[4] = {"dense", "a3b", "strata", "limbo"};
 
 // ---- output ---------------------------------------------------------------------------
 
@@ -363,6 +363,8 @@ std::pair<std::string, std::string> Stack::profile_model(const StackConf& c, con
         const auto [repo, file] = a3b_repo_file(c);
         return {model_path(repo, file, paths_), "ariadne limbo setup"};
     }
+    if (profile == "limbo")  // limbo-engine serves the main model unless LIMBO_REPO / LIMBO_FILE name another
+        return {model_path(c.str("LIMBO_REPO", c.str("MAIN_REPO")), c.str("LIMBO_FILE", c.str("MAIN_FILE")), paths_), "ariadne limbo setup"};
     return {model_path(c.str("MAIN_REPO"), c.str("MAIN_FILE"), paths_), "ariadne limbo setup"};
 }
 
@@ -508,6 +510,20 @@ std::vector<std::string> Stack::strata_argv(const StackConf& c, const std::strin
             "--engine", "strata", "--config", cfg, "--port", std::to_string(c.integer("MAIN_PORT", 8080))};
 }
 
+// limbo-engine's server: one shared K/V pool for every slot; slot 1 the main, slot 0 the prewarming sidekick (LIMBO_SLOTS, 2).
+std::vector<std::string> Stack::limbo_argv(const StackConf& c, const std::string& model) const {
+    std::vector<std::string> a = {c.limbo_server().string(), "-m", model,
+                                  "--host", c.str("MAIN_HOST", "127.0.0.1"),
+                                  "--port", std::to_string(c.integer("MAIN_PORT", 8080)),
+                                  "--ctx", std::to_string(c.integer("LIMBO_CTX", c.integer("MAIN_CTX", 65536))),
+                                  "--slots", std::to_string(c.integer("LIMBO_SLOTS", 2)),
+                                  "--kv", c.str("LIMBO_KV", "auto"), "--spec", c.str("LIMBO_SPEC", "auto"),
+                                  "--temperature", c.str("MAIN_TEMP", "1.0"), "--top-k", "20", "--top-p", "0.95", "--min-p", "0"};
+    std::istringstream extra(c.str("LIMBO_ARGS"));
+    for (std::string w; extra >> w;) a.push_back(w);
+    return a;
+}
+
 Launch Stack::main_launch(const StackConf& c, const std::string& profile) const {
     Launch l;
     l.model = profile_model(c, profile).first;
@@ -515,6 +531,10 @@ Launch Stack::main_launch(const StackConf& c, const std::string& profile) const 
     if (profile == "strata") {
         l.argv = strata_argv(c, l.model);
         l.cwd = fs::path(l.argv[1]).parent_path().parent_path().string();
+        return l;
+    }
+    if (profile == "limbo") {
+        l.argv = limbo_argv(c, l.model);
         return l;
     }
     // Unified memory turns "does not fit" into a spill paid on every decode step: opt-in.
@@ -587,6 +607,9 @@ int Stack::cmd_report() const {
     else out_.bad("llama.cpp missing", "— run: ariadne limbo setup");
     if (::access(c.server().c_str(), X_OK) == 0) out_.ok("llama-server built");
     else out_.bad("llama-server not built", "— run: ariadne limbo setup");
+    if (::access(c.limbo_server().c_str(), X_OK) == 0) out_.ok("limbo_serve_gpu built", "(" + c.limbo_server().string() + ")");
+    else if (default_profile(c) == "limbo") out_.bad("limbo_serve_gpu not built", "— run: ariadne limbo setup");
+    else out_.dim("limbo_serve_gpu not built — the limbo profile needs it (ariadne limbo setup)");
 
     out_.section("Local models");
     const std::string main_model = model_path(c.str("MAIN_REPO"), c.str("MAIN_FILE"), paths_);
@@ -736,6 +759,23 @@ int Stack::cmd_setup() const {
     }
     out_.ok("llama-server ready");
 
+    // limbo-engine: built where its tree is, with nvcc's temporaries inside it (never the shared /tmp)
+    if (fs::is_directory(c.limbo_dir() / ".git", ec) && which("nvcc").size()) {
+        const fs::path tmp = c.limbo_dir() / "build/tmp/ariadne-setup";
+        fs::create_directories(tmp, ec);
+        out_.section("limbo-engine");
+        if (run({"env", "TMPDIR=" + tmp.string(), "nice", "-n", "10", "make", "-C", c.limbo_dir().string(), "-j",
+                 std::to_string(std::max(1u, std::thread::hardware_concurrency() / 2)), "lib", "cuda", "serve-gpu"}) != 0) {
+            out_.bad("limbo-engine build failed");
+            if (default_profile(c) == "limbo") return 1;
+        } else {
+            out_.ok("limbo_serve_gpu ready");
+        }
+    } else if (default_profile(c) == "limbo") {
+        out_.bad("limbo-engine not found at " + c.limbo_dir().string(), "— clone it there or set LIMBO_DIR / LIMBO_BIN");
+        return 1;
+    }
+
     out_.section("Models");
     if (which("hf").empty() && which("curl").empty()) { out_.bad("neither hf nor curl", "— cannot download models"); return 1; }
     if (!fetch(c.str("MAIN_REPO"), c.str("MAIN_FILE"), "main")) return 1;
@@ -770,7 +810,11 @@ int Stack::cmd_setup() const {
 int Stack::cmd_start(const std::string& requested) const {
     const StackConf c = conf();
     const std::string profile = requested.empty() ? default_profile(c) : requested;
-    if (profile != "strata" && ::access(c.server().c_str(), X_OK) != 0) {
+    if (profile == "limbo" && ::access(c.limbo_server().c_str(), X_OK) != 0) {
+        out_.bad("limbo_serve_gpu not built at " + c.limbo_server().string(), "— run: ariadne limbo setup");
+        return 1;
+    }
+    if (profile != "strata" && profile != "limbo" && ::access(c.server().c_str(), X_OK) != 0) {
         out_.bad("llama-server not built", "— run: ariadne limbo setup");
         return 1;
     }

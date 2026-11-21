@@ -49,7 +49,7 @@ struct Launch {
 };
 
 extern const char* const kServers[3];        // main aux vis
-extern const char* const kProfiles[3];       // dense a3b strata
+extern const char* const kProfiles[4];       // dense a3b strata limbo
 
 class Stack {
 public:
@@ -81,6 +81,7 @@ public:
     std::vector<std::string> main_argv(const StackConf& c, const std::string& model) const;
     std::vector<std::string> a3b_argv(const StackConf& c, const std::string& model) const;
     std::vector<std::string> strata_argv(const StackConf& c, const std::string& cfg) const;
+    std::vector<std::string> limbo_argv(const StackConf& c, const std::string& model) const;
 
     // `ariadne limbo <cmd>`. Each returns the process exit code.
     int cmd_status(const StackConf* c = nullptr) const;

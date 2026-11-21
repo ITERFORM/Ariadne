@@ -174,6 +174,11 @@ int main() {
     const auto a3 = stack.a3b_argv(lc, "/models/a3b.gguf");
     chk(after(a3, "--n-cpu-moe") == "18" && after(a3, "-ub") == "2048" && after(a3, "-a") == "cybertiel-coder-35b-a3b",
         "a3b: experts in RAM, big micro-batch, its alias");
+    const auto lb = stack.limbo_argv(lc, "/models/main.gguf");
+    chk(lb[0] == lc.limbo_server().string() && after(lb, "-m") == "/models/main.gguf",
+        "limbo: limbo-engine's server on the main model");
+    chk(after(lb, "--slots") == "2" && after(lb, "--kv") == "auto" && after(lb, "--spec") == "auto", "limbo: main + sidekick in one pool, auto K/V, MTP");
+    chk(after(lb, "--ctx") == std::to_string(lc.integer("MAIN_CTX", 0)), "limbo: --ctx from MAIN_CTX");
     const auto st = stack.strata_argv(lc, "/s/strata.json");
     chk(st[1].find("serve/server.py") != std::string::npos && after(st, "--config") == "/s/strata.json", "strata goes through its server");
 

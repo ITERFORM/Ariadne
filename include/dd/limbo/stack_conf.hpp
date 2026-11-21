@@ -36,6 +36,9 @@ public:
 
     std::filesystem::path llama_dir() const;
     std::filesystem::path server() const { return llama_dir() / "build/bin/llama-server"; }
+    // limbo-engine's tree and its GPU server (the `limbo` profile); LIMBO_BIN overrides the binary
+    std::filesystem::path limbo_dir() const;
+    std::filesystem::path limbo_server() const;
     // main 8080, aux 8081, vis 8082 unless the conf names a port.
     std::pair<std::string, int> host_port(const std::string& name) const;
     bool enabled(const std::string& name) const;

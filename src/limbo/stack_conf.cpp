@@ -36,7 +36,8 @@ MAIN_FILE="Qwen3.8-27B-GSQ-RCO-IQ3_XXS-mtp.gguf"
 MAIN_PORT=8080
 MAIN_HOST="127.0.0.1"
 # What a bare `ariadne limbo start` serves: dense (llama.cpp, fits the smallest
-# box), a3b (the MoE below) or strata (needs a Strata checkout, see below).
+# box), a3b (the MoE below), strata (needs a Strata checkout) or limbo (limbo-engine's
+# own server: main + sidekick on one K/V pool, MTP speculation; see below).
 MAIN_PROFILE="dense"
 # One -kvu pool shared by every slot; MAIN_SLOT_CTX is each slot's own ceiling.
 MAIN_CTX=98304
@@ -134,6 +135,18 @@ A3B_UBATCH=2048
 # `ariadne limbo start strata`: the coder MoE through a Strata checkout.
 STRATA_DIR="$HOME/projects/strata-origin-upstream"
 STRATA_CONFIG="strata-coder-iq1_m.json"
+
+# --- profile limbo -------------------------------------------------------------------
+# limbo-engine's GPU server (LIMBO_DIR; LIMBO_BIN names another binary), built by setup.
+# One shared K/V pool for every slot: slot 1 the main conversation, slot 0 the prewarming
+# sidekick. The model is MAIN_REPO/MAIN_FILE unless LIMBO_REPO/LIMBO_FILE name another;
+# the context is MAIN_CTX unless LIMBO_CTX. LIMBO_KV auto: the most exact cache that fits;
+# LIMBO_SPEC auto: the model's MTP block when it fits. LIMBO_ARGS: more server flags.
+LIMBO_DIR="$HOME/projects/limbo-engine"
+LIMBO_SLOTS=2
+LIMBO_KV="auto"
+LIMBO_SPEC="auto"
+LIMBO_ARGS=""
 
 # --- mazemaker AFE model --------------------------------------------------------------
 # mazemaker's fact extraction calls an LLM on :8888. `ariadne limbo afe` serves
@@ -253,6 +266,13 @@ bool StackConf::flag(const std::string& key, bool def) const { return str(key, d
 
 fs::path StackConf::llama_dir() const {
     return fs::path(str("LLAMA_DIR", home_dir() + "/projects/llama.cpp-adaptive-kv-streaming"));
+}
+
+fs::path StackConf::limbo_dir() const { return fs::path(str("LIMBO_DIR", home_dir() + "/projects/limbo-engine")); }
+
+fs::path StackConf::limbo_server() const {
+    const std::string b = str("LIMBO_BIN");
+    return b.empty() ? limbo_dir() / "build/bin/tools/limbo_serve_gpu" : fs::path(b);
 }
 
 std::pair<std::string, int> StackConf::host_port(const std::string& name) const {
