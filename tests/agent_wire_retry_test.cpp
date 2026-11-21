@@ -49,9 +49,13 @@ struct FakeEndpoint {
     std::thread th;
     // A keep-alive server holds the socket open after the answer and waits for the next
     // request on it. Every real backend does this (llama-server, vLLM, OpenAI), so a
-    // reader that ends a turn on the socket rather than on the stream's terminator is
+    // a reader that ends a turn on the socket rather than on the stream's terminator is
     // only caught by a server that keeps the connection — which `hold_ms` stages.
     int hold_ms = 0;
+    // > 0: the answer dribbles out in 64-byte pieces this far apart. A stream that keeps
+    // moving must never be called a stall, however long the whole answer takes — the clock
+    // measures the gaps, not the call's age.
+    int drip_ms = 0;
     std::vector<std::pair<int, std::chrono::steady_clock::time_point>> held_;
     // Every request as it arrived, headers and body. The client's own view of what it sent is
     // not evidence; these bytes are what a provider would file the call under.
@@ -136,7 +140,15 @@ struct FakeEndpoint {
 
             const int n = ++served;
             const std::string& resp = n <= static_cast<int>(answers.size()) ? answers[n - 1] : kClosed;
-            if (resp != kClosed) ::send(c, resp.data(), resp.size(), MSG_NOSIGNAL);
+            if (resp != kClosed && drip_ms <= 0) ::send(c, resp.data(), resp.size(), MSG_NOSIGNAL);
+            else if (resp != kClosed) {
+                for (size_t at = 0; at < resp.size();) {
+                    const size_t n = at + 64 < resp.size() ? 64 : resp.size() - at;
+                    ::send(c, resp.data() + at, n, MSG_NOSIGNAL);
+                    at += n;
+                    if (at < resp.size()) std::this_thread::sleep_for(std::chrono::milliseconds(drip_ms));
+                }
+            }
             if (hold_ms > 0 && resp != kClosed) held_.emplace_back(c, std::chrono::steady_clock::now() + std::chrono::milliseconds(hold_ms));
             else ::close(c);
         }
@@ -209,8 +221,14 @@ int main() {
         "a streamed answer is an answer");
     chk(dd::agent::wire_failure(WireResult{CURLE_ABORTED_BY_CALLBACK, 0, false, true, false, false, false}) == WireFailure::Cancelled,
         "a cut call is never transient");
-    chk(dd::agent::wire_failure(WireResult{CURLE_OPERATION_TIMEDOUT, 0, true, false, false, false, false}) == WireFailure::Answer,
-        "the stall clock answering is not a hiccup");
+    // The stall clock fires on the SERVER's silence, which is a state, not a verdict: before
+    // the first word it is the same case as a provider that failed before its first token and
+    // one more send can differ. After words were handed out it is final — those words are kept
+    // (HttpLLM returns them as a wire_cut reply) and a re-send would say them twice.
+    chk(dd::agent::wire_failure(WireResult{CURLE_OPERATION_TIMEDOUT, 0, true, false, false, false, false}) == WireFailure::Transient,
+        "a silent server before the first word is worth one more send");
+    chk(dd::agent::wire_failure(WireResult{CURLE_OPERATION_TIMEDOUT, 0, true, false, true, false, false}) == WireFailure::Answer,
+        "a stall after the stream spoke is final: the words are kept, never re-sent");
     chk(dd::agent::wire_failure(WireResult{CURLE_WRITE_ERROR, 0, false, false, false, true, false}) == WireFailure::Answer,
         "the byte cap answering is not a hiccup");
     // A keep-alive server holds the socket after `data: [DONE]`; curl aborts the transfer
@@ -335,22 +353,89 @@ int main() {
         chk(elapsed < 200.0, "no backoff was paid for a 400");
     }
 
-    // ── A stream that already spoke, then died: no second send, because the caller has words ──
+    // -- A stream that already spoke, then died: the words are kept and the turn continues --
+    // The partial comes back as the answer it almost is (finish_reason "wire_cut") instead of
+    // an exception: the agent loop continues the turn from it exactly like a budget-cut reply.
+    // A re-send stays forbidden -- the caller already has these words on screen.
     {
-        std::string partial = std::string("data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"half\"},\"finish_reason\":null}]}\n\n");
-        std::string resp = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: " +
+        std::string partial = R"(data: {"choices":[{"index":0,"delta":{"content":"half"},"finish_reason":null}]}
+
+)";
+        std::string resp = std::string("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: ") +
                            std::to_string(partial.size() + 100) + "\r\nConnection: close\r\n\r\n" + partial;
         FakeEndpoint ep({resp}, 0);
         ep.start();
         HttpLLM llm = endpoint_llm(ep);
         std::string streamed;
         llm.on_content = [&](const std::string& d) { streamed += d; };
+        Message got;
         bool threw = false;
-        try { llm.chat({user("hi")}, json_arr()); } catch (const std::exception&) { threw = true; }
+        try { got = llm.chat({user("hi")}, json_arr()); } catch (const std::exception&) { threw = true; }
         ep.halt();
         chk(streamed == "half", "the delta the caller got is the delta the caller keeps");
         chk(ep.served.load() == 1, "a stream that spoke is never re-sent");
-        chk(threw, "a cut stream is reported, not silently answered twice");
+        chk(!threw && got.content == "half", "a cut stream's words come back, not an exception");
+        chk(got.finish_reason == "wire_cut", "and are marked cut, so the turn continues from them");
+    }
+
+    // -- A stream that keeps moving is never a stall, however long the answer takes --
+    // The clock must reset on bytes, not on the call's age: pieces arriving every 500 ms for
+    // seconds outlive the 2 s stall guard twice over and must still answer the turn. This is
+    // the regression for the dead counter -- a stall clock that measured wall time killed
+    // every healthy long stream at exactly stall_timeout_s and filed it as "no bytes".
+    {
+        FakeEndpoint ep({http(200, kSse, "text/event-stream")}, 0);
+        ep.drip_ms = 500;
+        ep.start();
+        HttpLLM llm = endpoint_llm(ep);
+        llm.stall_timeout_s = 2;
+        const auto t0 = std::chrono::steady_clock::now();
+        std::string answer;
+        bool threw = false;
+        try { answer = llm.chat({user("hi")}, json_arr()).content; } catch (const std::exception&) { threw = true; }
+        const double elapsed = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+        ep.halt();
+        chk(!threw && answer == "2 + 2 = 4", "a slow drip answers the turn instead of dying at the guard");
+        chk(ep.served.load() == 1, "a healthy stream is sent once");
+        chk(elapsed > 2000.0, "and it outlived the stall guard while moving (" +
+                                  std::to_string(static_cast<long>(elapsed)) + " ms)");
+    }
+
+    // -- A server that goes silent before the first word: one more send, not the ladder --
+    // Headers, then nothing, and the socket held open so only the stall clock ends the read.
+    // Silence is a come-back state; the second send is what answers the turn.
+    {
+        const std::string silent = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n";
+        FakeEndpoint ep({silent, http(200, kSse, "text/event-stream")}, 0);
+        ep.hold_ms = 6000;
+        ep.start();
+        HttpLLM llm = endpoint_llm(ep);
+        llm.stall_timeout_s = 2;
+        std::string answer;
+        bool threw = false;
+        try { answer = llm.chat({user("hi")}, json_arr()).content; } catch (const std::exception&) { threw = true; }
+        ep.halt();
+        chk(!threw && answer == "2 + 2 = 4", "a silent first send is asked once more, then answered");
+        chk(ep.served.load() == 2, "silence costs exactly one more connection, not the ladder");
+    }
+
+    // -- Silence on both sends: two connections, then the honest reason --
+    {
+        const std::string silent = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n";
+        FakeEndpoint ep({silent, silent}, 0);
+        ep.hold_ms = 6000;
+        ep.start();
+        HttpLLM llm = endpoint_llm(ep);
+        llm.stall_timeout_s = 2;
+        std::string what;
+        try { llm.chat({user("hi")}, json_arr()); } catch (const std::exception& e) { what = e.what(); }
+        ep.halt();
+        chk(what.find("curl: stalled") != std::string::npos,
+            "the failure says the wire went quiet, got '" + what + "'");
+        chk(what.find("(0 bytes had arrived)") != std::string::npos,
+            "and reports what actually arrived, not just the configured guard");
+        chk(what.find("(after 2 sends)") != std::string::npos, "and says it was asked twice");
+        chk(ep.served.load() == 2, "a silent server is asked twice, never nine times");
     }
 
     // ── The provider fails before the first token: nothing was spoken, so a re-send is free ──

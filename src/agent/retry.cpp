@@ -48,9 +48,14 @@ WireFailure wire_failure(const WireResult& r) {
     // abort code describes the reader, not the server. A re-send would duplicate the words.
     if (r.completed) return WireFailure::None;
 
-    // Both of these are a guard answering, not a hiccup: the byte cap and the stall clock
-    // are the limits the caller set, and a second send reaches the same limit.
-    if (r.refused || r.stalled) return WireFailure::Answer;
+    // The byte cap is a guard answering, not a hiccup: the same request draws the same
+    // oversized response. The stall clock is the other guard but fires on the SERVER's
+    // silence, not on anything the request decides — before the first word that is the
+    // provider failing before its first token, which the taxonomy below already calls
+    // worth one more send. After words were handed out it stays an answer: those words are
+    // kept (the wire returns them as a wire_cut reply) and a re-send would say them twice.
+    if (r.refused) return WireFailure::Answer;
+    if (r.stalled) return r.spoken ? WireFailure::Answer : WireFailure::Transient;
 
     if (r.code == 0) {   // curl reached the server and got a response line
         // A state that says "come back" is not a verdict: if nothing was handed out yet, the

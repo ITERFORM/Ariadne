@@ -615,9 +615,54 @@ static core::Message cut_mid(const std::string& text) {
     return m;
 }
 
+// A reply the wire cut mid-answer: HttpLLM salvages the partial and marks it wire_cut, so the
+// loop continues the turn from it instead of losing half an answer to a dead socket.
+static core::Message cut_wire(const std::string& text) {
+    core::Message m;
+    m.role = "assistant";
+    m.content = text;
+    m.finish_reason = "wire_cut";
+    return m;
+}
+
 // A half-answer is not the turn's end: the loop goes on from it, and a turn that cannot be
 // continued still ends with a sentence the operator can read, never a fragment mid-word.
 static void test_cut_reply_continuation() {
+    {
+        // The wire died mid-reply: same continuation, and the turn ends on the finished answer.
+        Script script;
+        script.replies.push_back(cut_wire("the fix is in engine.cpp because the templ"));
+        script.replies.push_back(answer_here("late renders jinja natively."));
+        Spy spy;
+        agent::Agent agent;
+        agent.max_iterations = 4;
+        agent.llm = &script;
+        agent.context = &spy;
+        const std::string out = agent.run("go");
+        chk(script.calls == 2, "a wire-cut reply continues the turn instead of ending it");
+        chk(out == "late renders jinja natively.",
+            "the turn's end is the finished answer, got '" + out + "'");
+        chk(spy.assistant_contents.size() == 2 &&
+            spy.assistant_contents[0] == "the fix is in engine.cpp because the templ",
+            "the wire-cut partial is on the tape, so the next call continues from it");
+    }
+    {
+        // A wire that keeps dying: the operator is told which force kept cutting the reply.
+        Script script;
+        script.replies.push_back(cut_wire("first half"));
+        script.replies.push_back(cut_wire("second half"));
+        script.replies.push_back(cut_wire("third half"));
+        script.replies.push_back(cut_wire("fourth half"));
+        Spy spy;
+        agent::Agent agent;
+        agent.max_iterations = 6;
+        agent.llm = &script;
+        agent.context = &spy;
+        const std::string out = agent.run("go");
+        chk(out.find("cut off by the wire dying mid-reply") != std::string::npos,
+            "a turn cut by the wire says so, got '" + out + "'");
+        chk(script.calls == 4, "wire-cut continuations stop at the cap, got " + std::to_string(script.calls));
+    }
     {
         Script script;
         script.replies.push_back(cut_mid("the fix is in engine.cpp because the templ"));

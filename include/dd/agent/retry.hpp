@@ -18,7 +18,8 @@ double jittered_backoff(int attempt, double base_delay = 5.0, double max_delay =
 // server or a state the server is in. A state that says "come back" can differ on a second
 // send; a verdict on the request cannot. So a refused connect, a cut socket, a 5xx that
 // handed nothing out, a rate limit, and a provider that failed *before the first token* are
-// worth one more send — everything else the server answered (a 400, a 401, a 501, a body past
+// worth one more send — a server that went silent before its first word is that same case in
+// socket silence. Everything else the server answered (a 400, a 401, a 501, a body past
 // the byte cap, an error chunk after a delta has already reached the caller, a call the
 // operator cut) is the answer this request gets every time it is sent; re-sending it spends a
 // turn to get the same words back, and on a stream it spends them twice. A 429 is the case

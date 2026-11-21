@@ -415,13 +415,20 @@ std::string Agent::run_loop(const std::string& user_message, bool& interrupted) 
                 // finish_reason=length means the answer was cut off mid-sentence, not finished.
                 // The partial reply is already on the tape, so the next call continues from it:
                 // ending here would hand the operator a turn that stops in the middle of a word.
-                if (assistant.finish_reason == "length") {
+                // A cut-off reply is continued, whoever cut it: the token budget (finish
+                // "length") or the wire dying mid-reply (finish "wire_cut", see
+                // HttpLLM::chat's salvage). The partial is already on the tape, so the next
+                // call continues from it.
+                if (assistant.finish_reason == "length" || assistant.finish_reason == "wire_cut") {
                     ++cut_replies;
                     if (cut_replies <= kCutReplyContinuations &&
                         !interrupt_requested.load(std::memory_order_acquire))
                         continue;
+                    const std::string by_what = assistant.finish_reason == "wire_cut"
+                                                    ? "the wire dying mid-reply"
+                                                    : "the token budget";
                     final_response = assistant.content +
-                        "\n\n(The reply was cut off by the token budget " + std::to_string(cut_replies) +
+                        "\n\n(The reply was cut off by " + by_what + " " + std::to_string(cut_replies) +
                         " time(s) and could not be continued, so the turn ends here.)";
                     break;
                 }
@@ -442,7 +449,9 @@ std::string Agent::run_loop(const std::string& user_message, bool& interrupted) 
                 continue;
             const std::string cut = assistant.finish_reason == "length"
                                        ? " (the reply was cut off by the token budget)"
-                                       : "";
+                                       : assistant.finish_reason == "wire_cut"
+                                             ? " (the reply was cut off when the wire died mid-reply)"
+                                             : "";
             final_response = std::string("The model answered this turn with nothing") + cut +
                              (assistant.reasoning.empty() ? " and no tool call" : " -- only thinking, no answer") +
                              ". It was retried " + std::to_string(blank_replies) +

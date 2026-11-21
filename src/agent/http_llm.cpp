@@ -14,6 +14,7 @@
 #include <chrono>
 #include <cctype>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <thread>
 
@@ -36,7 +37,9 @@ double num_at(const Json& o, const char* a, const char* b = nullptr) {
 // in case the server answers with plain JSON (an error, or no streaming).
 // The sink also carries the stall clock: LOW_SPEED_* only counts bytes curl
 // received, so a server that sends headers and then falls silent never trips
-// it — this callback does.
+// it — this callback does. The clock reads `total`, the one counter the write
+// callback moves: silence is measured from the last byte that arrived, never
+// from the call's age (a stream that keeps moving must never be called a stall).
 struct StreamSink {
     ChatStream cs;
     std::string raw;
@@ -44,11 +47,13 @@ struct StreamSink {
     std::vector<std::pair<std::string, std::string>> headers;   // the ones worth reading, in arrival order
     const std::atomic<bool>* cancel = nullptr;
     const std::atomic<bool>* cancel2 = nullptr;   // this batch's own kill, beside the turn's Esc
-    curl_off_t recv = 0;    // bytes the write callback has seen
     long stall_s = 0;       // 0 = no stall guard
-    curl_off_t last_recv = 0;
+    long warn_s = 0;        // this much silence is reported while it is still survivable
+    curl_off_t last_total = 0;
     bool seen = false;
     bool stalled = false;
+    long quiet_s = 0;       // the silence that fired the clock (measured, not configured)
+    long warned_s = 0;      // silence already reported, so one episode logs once per window
     std::chrono::steady_clock::time_point since{};
     curl_off_t max_bytes = 64u << 20;   // hard cap on the whole response
     curl_off_t total = 0;
@@ -71,17 +76,31 @@ int abort_if(void* ud, curl_off_t, curl_off_t, curl_off_t, curl_off_t) {
     if (!s->seen) {
         s->seen = true;
         s->since = now;
-        s->last_recv = s->recv;
+        s->last_total = s->total;
         return 0;
     }
-    if (s->recv != s->last_recv) {   // bytes are still moving: the clock resets
-        s->last_recv = s->recv;
+    if (s->total != s->last_total) {   // bytes are still moving: the clock resets
+        s->last_total = s->total;
         s->since = now;
+        s->warned_s = 0;
         return 0;
     }
-    if (std::chrono::duration_cast<std::chrono::seconds>(now - s->since).count() >= s->stall_s) {
+    const long quiet = static_cast<long>(std::chrono::duration_cast<std::chrono::seconds>(now - s->since).count());
+    if (quiet >= s->stall_s) {
+        s->quiet_s = quiet;
         s->stalled = true;
         return 1;
+    }
+    // Starvation is visible while it is happening, not only in the post-mortem: one record
+    // per warn window of silence, so the log shows the endpoint going quiet before the stall
+    // clock ends the call.
+    if (s->warn_s > 0 && quiet >= s->warn_s && quiet - s->warned_s >= s->warn_s) {
+        s->warned_s = quiet;
+        dd::core::logbook::emit(dd::core::logbook::Level::Warn, "wire", "quiet",
+                                {{"quiet_s", dd::core::logbook::N(static_cast<double>(quiet))},
+                                 {"recv_bytes", dd::core::logbook::N(static_cast<double>(s->total))},
+                                 {"spoke", dd::core::logbook::N(s->spoke ? 1.0 : 0.0)},
+                                 {"stall_s", dd::core::logbook::N(static_cast<double>(s->stall_s))}});
     }
     return 0;
 }
@@ -179,7 +198,9 @@ WireResult wire_result(const net::Response& r) {
 // Why this send failed, in exactly the words the caller got before the send loop existed.
 std::string why(CURLcode rc, long status, StreamSink& s, bool cancelled) {
     if (cancelled) return "interrupted";
-    if (s.stalled) return "curl: stalled — no bytes for " + std::to_string(s.stall_s) + "s";
+    if (s.stalled)
+        return "curl: stalled — no bytes for " + std::to_string(s.quiet_s) + "s (" +
+               std::to_string(s.total) + " bytes had arrived)";
     if (rc == CURLE_WRITE_ERROR && s.over) return "response over " + std::to_string(s.max_bytes) + " bytes";
     if (rc == CURLE_WRITE_ERROR && s.cs.overflowed()) return s.cs.error();
     if (rc != CURLE_OK) return std::string("curl: ") + curl_easy_strerror(rc);
@@ -214,6 +235,22 @@ std::string with_sends(const std::string& text, int sends) {
 
 static double elapsed_ms(std::chrono::steady_clock::time_point t0) {
     return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+}
+
+// A tool call the stream never finished carries half its JSON arguments, and half an
+// argument list is not a call — executing it would run something nobody asked for.
+// Only calls whose arguments parse survive a cut; the rest die with the partial.
+void keep_complete_tool_calls(core::Message& m) {
+    for (auto it = m.tool_calls.begin(); it != m.tool_calls.end();) {
+        bool whole = true;
+        try {
+            (void)core::json_parse(it->arguments);
+        } catch (...) {
+            whole = false;
+        }
+        if (whole) ++it;
+        else it = m.tool_calls.erase(it);
+    }
 }
 
 // -1 means "no budget": the loop then retries on the attempt count alone. A spent budget is 0, not
@@ -490,6 +527,10 @@ core::Message HttpLLM::chat(const std::vector<core::Message>& messages, const Js
         sink.cancel = cancel;
         sink.cancel2 = cancel2;
         sink.stall_s = stall_timeout_s;
+        // A quiet wire is visible before it is fatal: one "wire quiet" warn per this much
+        // silence, far under the stall window so the operator sees starvation while the call
+        // can still be saved.
+        sink.warn_s = std::clamp(stall_timeout_s / 15, 3L, 60L);
         // A delta that reached the caller marks this call as spoken: a second send of a
         // stream that already spoke would hand the same words out a second time.
         // Set only when the caller has a callback, exactly as before: ChatStream hands a
@@ -557,8 +598,12 @@ core::Message HttpLLM::chat(const std::vector<core::Message>& messages, const Js
         if (bodiless) f = WireFailure::Transient;   // nothing was spoken: a second send can differ
         // The provider's own failure before its first token, told apart from a socket fact by the
         // response line: a provider always answered something (2xx), a cut socket never did.
-        const bool upstream_hiccup = bodiless || (f == WireFailure::Transient && status >= 200 &&
-                                                  status < 400 && !sink.spoke);
+        // A stall is the same shape as the provider's pre-token failure below: the wire went
+        // quiet before (or while) answering. One more send, never the ladder — each stalled
+        // attempt costs the caller a whole stall window.
+        const bool upstream_hiccup = bodiless || (sink.stalled && !sink.spoke) ||
+                                     (f == WireFailure::Transient && status >= 200 &&
+                                      status < 400 && !sink.spoke);
         if (f == WireFailure::None) {
             sink.cs.finish();
             Json resp;
@@ -570,6 +615,15 @@ core::Message HttpLLM::chat(const std::vector<core::Message>& messages, const Js
             if (sink.cs.saw_data()) {
                 assistant = sink.cs.message();
                 assistant.reasoning = sink.cs.reasoning();
+                // The stream ended at the socket without its terminator and without a
+                // finish_reason: that is a cut answer, not a finished one. Marked wire_cut so
+                // the turn continues from the partial instead of ending mid-sentence, and any
+                // tool call the cut left half-written is dropped (half a JSON argument list is
+                // not a call). A healthy stream keeps every call untouched.
+                if (!sink.cs.done() && assistant.finish_reason.empty()) {
+                    assistant.finish_reason = "wire_cut";
+                    keep_complete_tool_calls(assistant);
+                }
                 streamed = static_cast<bool>(on_content) && !assistant.content.empty();
                 resp = core::json_obj({{"usage", jsp(sink.cs.usage())}, {"timings", jsp(sink.cs.timings())}});
             } else if (const Json* choices = core::json_get(resp, "choices");
@@ -636,17 +690,55 @@ core::Message HttpLLM::chat(const std::vector<core::Message>& messages, const Js
                                      {"status", core::logbook::N(static_cast<double>(status))},
                                      {"attempt", core::logbook::N(static_cast<double>(attempt))},
                                      {"ms", core::logbook::N(std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count())},
+                                     {"recv_bytes", core::logbook::N(static_cast<double>(sink.total))},
+                                     {"quiet_s", core::logbook::N(static_cast<double>(sink.quiet_s))},
+                                     {"spoke", core::logbook::N(sink.spoke ? 1.0 : 0.0)},
                                      {"why", core::logbook::S(reason)},
                                      {"said", core::logbook::S(dd::core::logbook::head(last, 240))}});
+        };
+        // Words the stream already produced are not thrown away when the wire then dies: the
+        // partial comes back as the answer it almost is (finish_reason "wire_cut") and the
+        // agent loop continues the turn from it — the same continuation a budget-cut reply
+        // gets. The operator's own cut and the byte cap stay final; everything else that
+        // reached this point is a dead wire under a half-written answer.
+        auto salvage = [&]() -> std::optional<core::Message> {
+            if (cancelled || sink.over || sink.cs.overflowed()) return std::nullopt;
+            sink.cs.finish();
+            core::Message m = sink.cs.message();
+            m.reasoning = sink.cs.reasoning();
+            keep_complete_tool_calls(m);
+            // Reasoning counts: a stream that died mid-thought still hands the trace back, and
+            // the loop's blank-reply path asks once more instead of losing the turn to a throw.
+            if (m.content.empty() && m.tool_calls.empty() && m.reasoning.empty()) return std::nullopt;
+            if (m.finish_reason.empty()) m.finish_reason = "wire_cut";
+            streamed = static_cast<bool>(on_content) && !m.content.empty();
+            dd::core::logbook::emit(dd::core::logbook::Level::Warn, "wire", "cut",
+                                    {{"endpoint", core::logbook::S(dd::core::logbook::endpoint(endpoint))},
+                                     {"status", core::logbook::N(static_cast<double>(status))},
+                                     {"attempt", core::logbook::N(static_cast<double>(attempt))},
+                                     {"ms", core::logbook::N(std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count())},
+                                     {"recv_bytes", core::logbook::N(static_cast<double>(sink.total))},
+                                     {"quiet_s", core::logbook::N(static_cast<double>(sink.quiet_s))},
+                                     {"out_bytes", core::logbook::N(static_cast<double>(m.content.size()))},
+                                     {"reasoning_bytes", core::logbook::N(static_cast<double>(m.reasoning.size()))}});
+            return m;
         };
         // Only a state that can differ is sent again, and only while nothing has been handed
         // out and the budget has time for the wait. A cut call, a verdict on the request, a
         // capped body, a stalled server and the last send all end here.
-        if (!transient(f) || attempt == sends) { wire_fail("final"); throw std::runtime_error(with_sends(last, attempt)); }
+        if (!transient(f) || attempt == sends) {
+            if (auto kept = salvage()) return *kept;
+            wire_fail("final");
+            throw std::runtime_error(with_sends(last, attempt));
+        }
         // The provider's own failure before its first token is worth one more send, not a
         // ladder's worth: a status said nothing about wanting a wait (200), and if the second
         // send comes back with the same sentence, the request is what it dislikes.
-        if (upstream_hiccup && attempt >= 2) { wire_fail("upstream"); throw std::runtime_error(with_sends(last, attempt)); }
+        if (upstream_hiccup && attempt >= 2) {
+            if (auto kept = salvage()) return *kept;
+            wire_fail("upstream");
+            throw std::runtime_error(with_sends(last, attempt));
+        }
         // A PROVIDER-level 429 is a routing fact, not an instruction to this client. The number in
         // Retry-After is the endpoint's window for requests that must come BACK to that endpoint; the
         // next send may land on another one, so sitting through it is how a first prompt became three
@@ -654,6 +746,7 @@ core::Message HttpLLM::chat(const std::vector<core::Message>& messages, const Js
         // sends on the ladder, then the server's own sentence and the knob that decides who may route.
         const bool routed_refusal = status == 429 && last.find("Provider returned error") != std::string::npos;
         if (routed_refusal && attempt >= 2) {
+            if (auto kept = salvage()) return *kept;
             wire_fail("routed_refusal");
             throw std::runtime_error(with_sends(last, attempt) +
                                      " (an endpoint behind the route refused it: that is a routing fact, not a wait -- which "
@@ -666,6 +759,7 @@ core::Message HttpLLM::chat(const std::vector<core::Message>& messages, const Js
         const double wait = status == 429 ? wire_rate_wait_ms(attempt, instruction, left)
                                          : wire_wait_ms(attempt, instruction, 250.0, 2000.0, left);
         if (wait < 0.0) {
+            if (auto kept = salvage()) return *kept;
             wire_fail("budget_spent");
             throw std::runtime_error(budget_spent(last, attempt, instruction, retry_budget_ms,
                                                   retry_after_cap_ms, retry_after_total_ms, instructed_spent));
