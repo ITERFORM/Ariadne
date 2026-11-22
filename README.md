@@ -16,6 +16,8 @@
 
 ---
 
+**Start here:** [`docs/OVERVIEW.md`](docs/OVERVIEW.md) — Ariadne from the inside out, one page, core first.
+
 ## What is Ariadne?
 
 Ariadne is a native C++20 agent harness built around a deceptively simple idea:
