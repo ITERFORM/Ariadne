@@ -1,6 +1,7 @@
 // Verifies dd::tools::apply_v4a_patch / fs_edit — the V4A application layer.
 // The contract under test is not "does the edit land" but "does a patch that cannot be applied
 // land nothing at all", and whether the failure names the hunk the model has to rewrite.
+#include "dd/tools/fs_tools.hpp"
 #include "dd/tools/patch_apply.hpp"
 #include "dd/tools/skill_provenance.hpp"
 
@@ -279,6 +280,26 @@ int main() {
     CHECK(dd::tools::get_current_write_origin() == "learn_loop", "origin returns to the outer writer");
     dd::tools::reset_current_write_origin(outer);
     CHECK(dd::tools::get_current_write_origin() == "foreground", "reset clears back to the default writer");
+
+    // A patch that parses to nothing says what is missing (a quantized model resent a headerless hunk five times
+    // against a bare "patch is empty").
+    {
+        const std::string r = run("@@ hint @@\n-      <a to=\"1\"/>\n+      <a values=\"1;2\"/>\n", opts(root));
+        CHECK(failed(r) && err_text(r).find("*** Update File: <path>") != std::string::npos && applied(r) == 0,
+              "headerless hunks: the error names the missing Update File line");
+        const std::string r2 = run("*** Update File: x.txt\n@@\n-a\n+b\n", opts(root));
+        CHECK(failed(r2) && (err_text(r2).find("Begin Patch") != std::string::npos || err_text(r2).find("x.txt") != std::string::npos),
+              "a section without Begin Patch: the error says so (or the parser names the file)");
+        const std::string r3 = run("*** Begin Patch\n*** End Patch\n", opts(root));
+        CHECK(failed(r3) && err_text(r3) == "patch is empty", "a patch with no sections and no hunks is still just empty");
+    }
+    // write_file names the half of the call that is missing.
+    {
+        const Json only_content = json_obj({{"content", std::make_shared<Json>(json_str("<svg/>"))}});
+        CHECK(err_text(fs_write(only_content)).rfind("path required", 0) == 0, "write_file: content without path says path");
+        const Json only_path = json_obj({{"path", std::make_shared<Json>(json_str(root + "/w.txt"))}});
+        CHECK(err_text(fs_write(only_path)).rfind("content required", 0) == 0, "write_file: path without content says content");
+    }
 
     fs::remove_all(tmp, ec);
     std::cout << (failures ? "FAILURES: " + std::to_string(failures) : "ok") << "\n";

@@ -187,7 +187,10 @@ std::string fs_read(const Json& args, const FsLimits& limits) {
 std::string fs_write(const Json& args) {
     const Json* p = json_get(args, "path");
     const Json* c = json_get(args, "content");
-    if (!p || p->type != Json::Str || !c || c->type != Json::Str) return jerr("path+content required");
+    const bool has_p = p && p->type == Json::Str, has_c = c && c->type == Json::Str;
+    if (!has_p && has_c) return jerr("path required: the call carried content but no path; send both");
+    if (has_p && !has_c) return jerr("content required: the call carried a path but no content string; send both");
+    if (!has_p) return jerr("path+content required");
     const std::string& path = p->str;
     if (path.empty()) return jerr("path required");
     if (has_traversal_component(path)) return jerr("path contains '..': " + path);

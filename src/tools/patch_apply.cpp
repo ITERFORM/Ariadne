@@ -204,6 +204,23 @@ std::optional<std::string> dropped_hunks(const std::string& patch_text) {
     return std::nullopt;
 }
 
+// Why a patch parsed to nothing, in words a model can act on: hunks under no file section, or sections with no
+// *** Begin Patch. "patch is empty" alone sent a quantized model round the same headerless hunk five times.
+std::optional<std::string> empty_patch_hint(const std::string& patch_text) {
+    bool begin = false, section = false, hunks = false;
+    for (const std::string& line : split_patch_lines(patch_text)) {
+        if (line.find("*** Begin Patch") != std::string::npos || line.find("***Begin Patch") != std::string::npos) begin = true;
+        else if (line.rfind("*** Update File:", 0) == 0 || line.rfind("*** Add File:", 0) == 0 ||
+                 line.rfind("*** Delete File:", 0) == 0 || line.rfind("*** Move File:", 0) == 0)
+            section = true;
+        else if (!line.empty() && (line.front() == '+' || line.front() == '-' || line.rfind("@@", 0) == 0)) hunks = true;
+    }
+    const std::string shape = "*** Begin Patch\n*** Update File: <path>\n@@ <anchor> @@\n-old line\n+new line\n*** End Patch";
+    if (hunks && !section) return "patch is empty: no '*** Update File: <path>' line names the file its hunks belong to. Send:\n" + shape;
+    if (section && !begin) return "patch is empty: '*** Begin Patch' must come first. Send:\n" + shape;
+    return std::nullopt;
+}
+
 struct Planned {
     std::unordered_map<std::string, std::string> staged;   // path -> the content it will be written
     std::vector<std::string> removes;                      // paths unlinked after the writes
@@ -292,7 +309,7 @@ ApplyReport apply_v4a_patch(const std::string& patch_text, const ApplyOptions& o
     ApplyReport rep;
     const auto parsed = parse_v4a_patch(patch_text);
     if (parsed.second) { rep.error = "patch does not parse: " + *parsed.second; return rep; }
-    if (parsed.first.empty()) { rep.error = "patch is empty"; return rep; }
+    if (parsed.first.empty()) { rep.error = empty_patch_hint(patch_text).value_or("patch is empty"); return rep; }
     if (const auto e = dropped_hunks(patch_text)) { rep.error = *e; return rep; }
 
     Planned pl;
