@@ -480,6 +480,8 @@ int main() {
         chk(w[0].find("question\\n\\n<memory-context>") != std::string::npos, "recall rides the question");
         chk(w[1].find("[aged out of context] read_file(/old.txt)") != std::string::npos, "collapsed line names the call");
         chk(w[2].find("reasoning_content") != std::string::npos, "newest reasoning kept");
+        chk(w[1].find("\"reasoning_content\":\"\"") != std::string::npos,
+            "an aged-out turn's line carries an explicit empty reasoning_content (cut: a server keeping its own thinking must not refill it)");
         chk(soaked.size() == 2, "collapsed and current-turn thinking soaked once each");
         // maze down: aged reasoning goes to disk behind a handle
         maze_up = false;

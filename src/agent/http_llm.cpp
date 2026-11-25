@@ -324,6 +324,9 @@ Json wire_message(const core::Message& m) {
         if (it->first == "reasoning") it->first = "reasoning_content";
         ++it;
     }
+    // a reasoning the context dropped goes out as an explicit "": cut, as if there never was any -- not "absent", which a
+    // server that keeps its own thinking (limbo --preserve-thinking) refills
+    if (m.role == "assistant" && m.reasoning.empty() && m.reasoning_cut) core::obj_set(o, "reasoning_content", core::json_str(""));
     return o;
 }
 

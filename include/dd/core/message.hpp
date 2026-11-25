@@ -41,6 +41,8 @@ struct Message {
     std::string name;                 // optional
     std::string finish_reason;        // assistant: "tool_calls"|"stop"|...
     std::string reasoning;            // assistant reasoning trace (optional)
+    bool reasoning_cut = false;       // the context dropped it on purpose: the wire says so (reasoning_content ""), so a server
+                                      // that remembers its own thinking (limbo) does not put it back
 
     bool has_tool_calls() const { return !tool_calls.empty(); }
 };

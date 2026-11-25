@@ -356,6 +356,7 @@ Renderer::Epoch Renderer::epoch(const std::vector<ItemPtr>& items, long current,
                     if (!lines.empty()) {
                         Message line;
                         line.role = "assistant";
+                        line.reasoning_cut = true;   // its thinking left with it (soaked): say so on the wire
                         line.content = "[aged out of context] " + lines + "." +
                                        (paths ? " Paths are readable with read_file(path)." : "") +
                                        " Run a call again if its output is needed.";
@@ -382,6 +383,7 @@ Renderer::Epoch Renderer::epoch(const std::vector<ItemPtr>& items, long current,
             if (maze) {
                 if (work[i].src && soak_) soak_(*work[i].src);
                 m.reasoning.clear();
+                m.reasoning_cut = true;
                 continue;
             }
             const std::string path = spill_ ? spill_->write("reasoning", m.reasoning) : "";
